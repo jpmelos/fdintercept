@@ -22,15 +22,29 @@ cargo install --path .
 
 ## Usage
 
-TODO
+Call fdintercept from the command line:
+
+```bash
+fdintercept -- your-command [args...]
+```
 
 ## Output
 
-TODO
+The program creates three log files in the current directory:
+
+- `stdin.log`: Contains all input sent to the program.
+- `stdout.log`: Contains all standard output from the program.
+- `stderr.log`: Contains all error output from the program.
 
 ## Example
 
-TODO
+```bash
+# Log all I/O for curl.
+fdintercept -- curl https://example.com
+
+# Log all I/O for a Python script.
+fdintercept -- python script.py arg1 arg2
+```
 
 ## Building from Source
 
@@ -42,7 +56,7 @@ cargo build --release
 
 ## Roadmap
 
-- [ ] Transparently intercept stdin, stdout, and stderr
+- [x] Transparently intercept stdin, stdout, and stderr
 - [ ] Supply target command via configuration file
 - [ ] Supply target command via environment variable
 - [ ] Define log filenames via CLI
