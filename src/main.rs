@@ -1,12 +1,14 @@
 use clap::Parser;
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
+use non_empty_string::NonEmptyString;
+use nonempty::NonEmpty;
 use serde::Deserialize;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -19,9 +21,81 @@ struct CliArgs {
     target: Vec<String>,
 }
 
+#[derive(Debug)]
+enum CliArgsTargetParseError {
+    NotDefined,
+    EmptyExecutable,
+}
+
+impl std::fmt::Display for CliArgsTargetParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDefined => write!(f, "Target is not defined"),
+            Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for CliArgsTargetParseError {}
+
 #[derive(Deserialize)]
 struct Config {
     target: Option<String>,
+}
+
+#[derive(Debug)]
+enum ConfigTargetParseError {
+    NotDefined,
+    FailedToTokenize,
+    Empty,
+    EmptyExecutable,
+}
+
+impl std::fmt::Display for ConfigTargetParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDefined => write!(f, "Target is not defined"),
+            Self::FailedToTokenize => write!(f, "Failed to tokenize target"),
+            Self::Empty => write!(f, "Target cannot be empty"),
+            Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigTargetParseError {}
+
+#[derive(Debug)]
+enum TargetParseError {
+    CliArgs(CliArgsTargetParseError),
+    Config(ConfigTargetParseError),
+}
+
+impl std::fmt::Display for TargetParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CliArgs(e) => write!(f, "{}", e),
+            Self::Config(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for TargetParseError {}
+
+impl From<CliArgsTargetParseError> for TargetParseError {
+    fn from(error: CliArgsTargetParseError) -> Self {
+        Self::CliArgs(error)
+    }
+}
+
+impl From<ConfigTargetParseError> for TargetParseError {
+    fn from(error: ConfigTargetParseError) -> Self {
+        Self::Config(error)
+    }
+}
+
+struct Target {
+    executable: NonEmptyString,
+    args: Vec<String>,
 }
 
 struct ChildGuard {
@@ -35,20 +109,14 @@ impl Drop for ChildGuard {
     }
 }
 
-fn main() -> ExitCode {
+fn main() {
     let cli_args = CliArgs::parse();
     let config = get_config();
 
-    let (program, program_args) = if !cli_args.target.is_empty() {
-        extract_program_and_args_from_target(cli_args.target.clone())
-            .expect("Cannot panic since `target` is never empty")
-    } else {
-        if let Some(target) = config.and_then(|c| c.target) {
-            extract_program_and_args_from_target(vec![target.clone()]).expect("No target program")
-        } else {
-            panic!("No target program")
-        }
-    };
+    let target = get_target_from_cli_args_or_config(&cli_args, &config).unwrap_or_else(|e| {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    });
 
     let stdin_log = OpenOptions::new()
         .create(true)
@@ -69,8 +137,8 @@ fn main() -> ExitCode {
         .open("stderr.log")
         .expect("Failed to create log file");
 
-    let child = Command::new(program)
-        .args(program_args)
+    let child = Command::new(String::from(target.executable))
+        .args(target.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -112,11 +180,11 @@ fn main() -> ExitCode {
         thread.join().expect("Thread panicked");
     }
 
-    ExitCode::from(
+    std::process::exit(
         kill_child_process_with_grace_period(&child_guard)
             .code()
-            .unwrap_or(1) as u8,
-    )
+            .unwrap_or(1),
+    );
 }
 
 fn get_config() -> Option<Config> {
@@ -126,17 +194,48 @@ fn get_config() -> Option<Config> {
     toml::from_str(&config_contents).ok()?
 }
 
-fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(String, Vec<String>)> {
-    if target.len() == 1 {
-        target = shlex::split(&target.pop().unwrap()).expect("Failed to parse target");
+fn get_target_from_cli_args_or_config(
+    cli_args: &CliArgs,
+    config: &Option<Config>,
+) -> Result<Target, TargetParseError> {
+    match get_target_from_cli_args(cli_args) {
+        Ok(target) => return Ok(target),
+        Err(CliArgsTargetParseError::NotDefined) => (),
+        Err(e) => return Err(e.into()),
+    };
+    match config {
+        Some(cfg) => Ok(get_target_from_config(cfg)?),
+        None => Err(ConfigTargetParseError::NotDefined.into()),
+    }
+}
+
+fn get_target_from_cli_args(cli_args: &CliArgs) -> Result<Target, CliArgsTargetParseError> {
+    if cli_args.target.is_empty() {
+        return Err(CliArgsTargetParseError::NotDefined);
     }
 
-    if target.is_empty() {
-        return None;
-    }
+    let target_vec = NonEmpty::from_vec(cli_args.target.clone()).unwrap();
+    Ok(Target {
+        executable: NonEmptyString::new(target_vec.head)
+            .map_err(|_| CliArgsTargetParseError::EmptyExecutable)?,
+        args: target_vec.tail,
+    })
+}
 
-    let mut target_iter = target.into_iter();
-    Some((target_iter.next().unwrap(), target_iter.collect()))
+fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseError> {
+    let tokenized_target = shlex::split(
+        config
+            .target
+            .as_ref()
+            .ok_or(ConfigTargetParseError::NotDefined)?,
+    )
+    .ok_or(ConfigTargetParseError::FailedToTokenize)?;
+    let target_vec = NonEmpty::from_vec(tokenized_target).ok_or(ConfigTargetParseError::Empty)?;
+    Ok(Target {
+        executable: NonEmptyString::new(target_vec.head)
+            .map_err(|_| ConfigTargetParseError::EmptyExecutable)?,
+        args: target_vec.tail,
+    })
 }
 
 fn spawn_thread_for_fd(
