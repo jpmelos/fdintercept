@@ -81,8 +81,8 @@ fn main() -> io::Result<()> {
         .stderr(Stdio::piped())
         .spawn()?;
     let child_guard = Arc::new(Mutex::new(ChildGuard { child }));
-    let child_guard_clone = Arc::clone(&child_guard);
 
+    let child_guard_clone = Arc::clone(&child_guard);
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         if let Ok(mut child_guard_lock) = child_guard_clone.lock() {
