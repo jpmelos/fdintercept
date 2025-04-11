@@ -108,7 +108,7 @@ fn main() -> io::Result<()> {
     let stream_closed_clone = Arc::clone(&stream_closed);
     spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, stream_closed_clone);
 
-    let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed);
+    let (stream_closed_mutex_status, stream_closed_condvar) = &*stream_closed;
     let mut stream_closed_mutex_status_lock = stream_closed_mutex_status.lock().unwrap();
     while !*stream_closed_mutex_status_lock {
         stream_closed_mutex_status_lock = stream_closed_condvar
