@@ -136,11 +136,11 @@ fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(Stri
     }
 
     if target.is_empty() {
-        None
-    } else {
-        let mut target_iter = target.into_iter();
-        Some((target_iter.next().unwrap(), target_iter.collect()))
+        return None;
     }
+
+    let mut target_iter = target.into_iter();
+    Some((target_iter.next().unwrap(), target_iter.collect()))
 }
 
 fn spawn_thread_for_fd(
