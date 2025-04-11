@@ -97,19 +97,28 @@ fn main() {
         .write(true)
         .truncate(true)
         .open("stdin.log")
-        .expect("Failed to create log file");
+        .unwrap_or_else(|e| {
+            eprintln!("Error creating stdin log file: {}", e);
+            std::process::exit(1);
+        });
     let stdout_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open("stdout.log")
-        .expect("Failed to create log file");
+        .unwrap_or_else(|e| {
+            eprintln!("Error creating stdout log file: {}", e);
+            std::process::exit(1);
+        });
     let stderr_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open("stderr.log")
-        .expect("Failed to create log file");
+        .unwrap_or_else(|e| {
+            eprintln!("Error creating stderr log file: {}", e);
+            std::process::exit(1);
+        });
 
     let child = Command::new(String::from(target.executable))
         .args(target.args)
@@ -117,7 +126,10 @@ fn main() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to start child process");
+        .unwrap_or_else(|e| {
+            eprintln!("Error starting child process: {}", e);
+            std::process::exit(1);
+        });
     let child_guard = Arc::new(Mutex::new(ChildGuard { child }));
 
     let child_guard_clone = Arc::clone(&child_guard);
