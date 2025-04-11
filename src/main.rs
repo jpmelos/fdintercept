@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::env;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -39,17 +39,17 @@ fn main() -> io::Result<()> {
         }
     };
 
-    let mut stdin_log = OpenOptions::new()
+    let stdin_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open("stdin.log")?;
-    let mut stdout_log = OpenOptions::new()
+    let stdout_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open("stdout.log")?;
-    let mut stderr_log = OpenOptions::new()
+    let stderr_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
@@ -73,17 +73,17 @@ fn main() -> io::Result<()> {
     }));
 
     let mut child_guard_lock = child_guard.lock().unwrap();
-    let mut child_stdin = child_guard_lock
+    let child_stdin = child_guard_lock
         .child
         .stdin
         .take()
         .expect("Failed to get child stdin");
-    let mut child_stdout = child_guard_lock
+    let child_stdout = child_guard_lock
         .child
         .stdout
         .take()
         .expect("Failed to get child stdout");
-    let mut child_stderr = child_guard_lock
+    let child_stderr = child_guard_lock
         .child
         .stderr
         .take()
@@ -93,109 +93,13 @@ fn main() -> io::Result<()> {
     let stream_closed = Arc::new((Mutex::new(false), Condvar::new()));
 
     let stream_closed_clone = Arc::clone(&stream_closed);
-    thread::spawn(move || {
-        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed_clone);
-        let mut buffer = [0; 1024];
-        loop {
-            if *stream_closed_mutex_status.lock().unwrap() {
-                break;
-            }
-            match io::stdin().read(&mut buffer) {
-                Ok(0) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-                Ok(n) => {
-                    if let Err(_) = child_stdin.write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                    if let Err(_) = stdin_log.write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                }
-                Err(_) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-            }
-        }
-    });
+    spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, stream_closed_clone);
 
     let stream_closed_clone = Arc::clone(&stream_closed);
-    thread::spawn(move || {
-        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed_clone);
-        let mut buffer = [0; 1024];
-        loop {
-            if *stream_closed_mutex_status.lock().unwrap() {
-                break;
-            }
-            match child_stdout.read(&mut buffer) {
-                Ok(0) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-                Ok(n) => {
-                    if let Err(_) = io::stdout().write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                    if let Err(_) = stdout_log.write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                }
-                Err(_) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-            }
-        }
-    });
+    spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log, stream_closed_clone);
 
     let stream_closed_clone = Arc::clone(&stream_closed);
-    thread::spawn(move || {
-        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed_clone);
-        let mut buffer = [0; 1024];
-        loop {
-            if *stream_closed_mutex_status.lock().unwrap() {
-                break;
-            }
-            match child_stderr.read(&mut buffer) {
-                Ok(0) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-                Ok(n) => {
-                    if let Err(_) = io::stderr().write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                    if let Err(_) = stderr_log.write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                }
-                Err(_) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-            }
-        }
-    });
+    spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, stream_closed_clone);
 
     let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed);
     let mut stream_closed_mutex_status_lock = stream_closed_mutex_status.lock().unwrap();
@@ -240,4 +144,45 @@ fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(Stri
         let mut iter = target.into_iter();
         Some((iter.next().unwrap(), iter.collect()))
     }
+}
+
+fn spawn_thread_for_fd(
+    mut src_fd: impl Read + Send + 'static,
+    mut dst_fd: impl Write + Send + 'static,
+    mut log: File,
+    stream_closed: Arc<(Mutex<bool>, Condvar)>,
+) {
+    thread::spawn(move || {
+        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed);
+        let mut buffer = [0; 1024];
+        loop {
+            if *stream_closed_mutex_status.lock().unwrap() {
+                break;
+            }
+            match src_fd.read(&mut buffer) {
+                Ok(0) => {
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
+                    break;
+                }
+                Ok(n) => {
+                    if let Err(_) = dst_fd.write_all(&buffer[..n]) {
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
+                        break;
+                    }
+                    if let Err(_) = log.write_all(&buffer[..n]) {
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
+                        break;
+                    }
+                }
+                Err(_) => {
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
+                    break;
+                }
+            }
+        }
+    });
 }
