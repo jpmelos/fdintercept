@@ -111,7 +111,10 @@ impl Drop for ChildGuard {
 
 fn main() {
     let cli_args = CliArgs::parse();
-    let config = get_config();
+    let config = get_config().unwrap_or_else(|e| {
+        eprintln!("Error reading config: {}", e);
+        std::process::exit(1);
+    });
 
     let target = get_target_from_cli_args_or_config(&cli_args, &config).unwrap_or_else(|e| {
         eprintln!("Error: {}", e);
@@ -187,11 +190,20 @@ fn main() {
     );
 }
 
-fn get_config() -> Option<Config> {
-    let home = env::var("HOME").ok()?;
+fn get_config() -> Result<Option<Config>, Box<dyn std::error::Error>> {
+    let home = env::var("HOME")?;
     let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
-    let config_contents = std::fs::read_to_string(config_path).ok()?;
-    toml::from_str(&config_contents).ok()?
+
+    let config_contents = match std::fs::read_to_string(config_path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Box::new(e)),
+    };
+
+    match toml::from_str(&config_contents) {
+        Ok(config) => Ok(config),
+        Err(e) => Err(Box::new(e)),
+    }
 }
 
 fn get_target_from_cli_args_or_config(
