@@ -6,7 +6,7 @@ use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -35,7 +35,7 @@ impl Drop for ChildGuard {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli_args = CliArgs::parse();
 
     let (program, program_args) = if !cli_args.target.is_empty() {
@@ -112,7 +112,11 @@ fn main() {
         thread.join().expect("Thread panicked");
     }
 
-    kill_child_process_with_grace_period(&child_guard);
+    ExitCode::from(
+        kill_child_process_with_grace_period(&child_guard)
+            .code()
+            .unwrap_or(1) as u8,
+    )
 }
 
 fn get_config() -> Option<Config> {
