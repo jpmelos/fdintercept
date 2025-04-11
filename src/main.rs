@@ -23,24 +23,6 @@ impl Drop for ChildGuard {
     }
 }
 
-fn get_config() -> Option<Config> {
-    let home = env::var("HOME").ok()?;
-    let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
-    let config_contents = std::fs::read_to_string(config_path).ok()?;
-    toml::from_str(&config_contents).ok()?
-}
-
-fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(String, Vec<String>)> {
-    if target.is_empty() {
-        None
-    } else if target.len() == 1 {
-        Some((target.pop().unwrap(), Vec::new()))
-    } else {
-        let mut iter = target.into_iter();
-        Some((iter.next().unwrap(), iter.collect()))
-    }
-}
-
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
     let target_separator_pos = args.iter().position(|arg| arg == "--");
@@ -240,4 +222,22 @@ fn main() -> io::Result<()> {
     }
 
     std::process::exit(status.and_then(|s| s.code()).unwrap_or(1));
+}
+
+fn get_config() -> Option<Config> {
+    let home = env::var("HOME").ok()?;
+    let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
+    let config_contents = std::fs::read_to_string(config_path).ok()?;
+    toml::from_str(&config_contents).ok()?
+}
+
+fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(String, Vec<String>)> {
+    if target.is_empty() {
+        None
+    } else if target.len() == 1 {
+        Some((target.pop().unwrap(), Vec::new()))
+    } else {
+        let mut iter = target.into_iter();
+        Some((iter.next().unwrap(), iter.collect()))
+    }
 }
