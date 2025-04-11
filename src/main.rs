@@ -4,8 +4,7 @@ use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 #[derive(Deserialize)]
@@ -109,32 +108,37 @@ fn main() -> io::Result<()> {
         .expect("Failed to get child stderr");
     drop(child_guard_lock);
 
-    let stream_closed = Arc::new(AtomicBool::new(false));
+    let stream_closed = Arc::new((Mutex::new(false), Condvar::new()));
 
     let stream_closed_clone = Arc::clone(&stream_closed);
     thread::spawn(move || {
+        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed_clone);
         let mut buffer = [0; 1024];
         loop {
-            if stream_closed_clone.load(Ordering::SeqCst) {
+            if *stream_closed_mutex_status.lock().unwrap() {
                 break;
             }
             match io::stdin().read(&mut buffer) {
                 Ok(0) => {
-                    stream_closed_clone.store(true, Ordering::SeqCst);
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
                     break;
                 }
                 Ok(n) => {
                     if let Err(_) = child_stdin.write_all(&buffer[..n]) {
-                        stream_closed_clone.store(true, Ordering::SeqCst);
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
                         break;
                     }
                     if let Err(_) = stdin_log.write_all(&buffer[..n]) {
-                        stream_closed_clone.store(true, Ordering::SeqCst);
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
                         break;
                     }
                 }
                 Err(_) => {
-                    stream_closed_clone.store(true, Ordering::SeqCst);
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
                     break;
                 }
             }
@@ -143,28 +147,33 @@ fn main() -> io::Result<()> {
 
     let stream_closed_clone = Arc::clone(&stream_closed);
     thread::spawn(move || {
+        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed_clone);
         let mut buffer = [0; 1024];
         loop {
-            if stream_closed_clone.load(Ordering::SeqCst) {
+            if *stream_closed_mutex_status.lock().unwrap() {
                 break;
             }
             match child_stdout.read(&mut buffer) {
                 Ok(0) => {
-                    stream_closed_clone.store(true, Ordering::SeqCst);
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
                     break;
                 }
                 Ok(n) => {
                     if let Err(_) = io::stdout().write_all(&buffer[..n]) {
-                        stream_closed_clone.store(true, Ordering::SeqCst);
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
                         break;
                     }
                     if let Err(_) = stdout_log.write_all(&buffer[..n]) {
-                        stream_closed_clone.store(true, Ordering::SeqCst);
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
                         break;
                     }
                 }
                 Err(_) => {
-                    stream_closed_clone.store(true, Ordering::SeqCst);
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
                     break;
                 }
             }
@@ -173,45 +182,54 @@ fn main() -> io::Result<()> {
 
     let stream_closed_clone = Arc::clone(&stream_closed);
     thread::spawn(move || {
+        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed_clone);
         let mut buffer = [0; 1024];
         loop {
-            if stream_closed_clone.load(Ordering::SeqCst) {
+            if *stream_closed_mutex_status.lock().unwrap() {
                 break;
             }
             match child_stderr.read(&mut buffer) {
                 Ok(0) => {
-                    stream_closed_clone.store(true, Ordering::SeqCst);
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
                     break;
                 }
                 Ok(n) => {
                     if let Err(_) = io::stderr().write_all(&buffer[..n]) {
-                        stream_closed_clone.store(true, Ordering::SeqCst);
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
                         break;
                     }
                     if let Err(_) = stderr_log.write_all(&buffer[..n]) {
-                        stream_closed_clone.store(true, Ordering::SeqCst);
+                        *stream_closed_mutex_status.lock().unwrap() = true;
+                        stream_closed_condvar.notify_one();
                         break;
                     }
                 }
                 Err(_) => {
-                    stream_closed_clone.store(true, Ordering::SeqCst);
+                    *stream_closed_mutex_status.lock().unwrap() = true;
+                    stream_closed_condvar.notify_one();
                     break;
                 }
             }
         }
     });
 
+    let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed);
+    let mut stream_closed_mutex_status_lock = stream_closed_mutex_status.lock().unwrap();
+    while !*stream_closed_mutex_status_lock {
+        stream_closed_mutex_status_lock = stream_closed_condvar
+            .wait(stream_closed_mutex_status_lock)
+            .unwrap();
+    }
+
     let mut status = None;
-    while !stream_closed.load(Ordering::SeqCst) {
-        if let Ok(mut guard) = child_guard.try_lock() {
-            if let Ok(exit_status) = guard.child.try_wait() {
-                if let Some(s) = exit_status {
-                    status = Some(s);
-                    break;
-                }
+    if let Ok(mut guard) = child_guard.try_lock() {
+        if let Ok(exit_status) = guard.child.try_wait() {
+            if let Some(s) = exit_status {
+                status = Some(s);
             }
         }
-        thread::sleep(std::time::Duration::from_millis(10));
     }
 
     if status.is_none() {
