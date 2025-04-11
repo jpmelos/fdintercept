@@ -1,10 +1,17 @@
+use serde::Deserialize;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+#[derive(Deserialize)]
+struct Config {
+    target: Option<String>,
+}
 
 struct ChildGuard {
     child: Child,
@@ -17,16 +24,39 @@ impl Drop for ChildGuard {
     }
 }
 
+fn get_config() -> Option<Config> {
+    let home = env::var("HOME").ok()?;
+    let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
+    let config_contents = std::fs::read_to_string(config_path).ok()?;
+    toml::from_str(&config_contents).ok()?
+}
+
+fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(String, Vec<String>)> {
+    if target.is_empty() {
+        None
+    } else if target.len() == 1 {
+        Some((target.pop().unwrap(), Vec::new()))
+    } else {
+        let mut iter = target.into_iter();
+        Some((iter.next().unwrap(), iter.collect()))
+    }
+}
+
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
-
-    let separator_pos = args
-        .iter()
-        .position(|arg| arg == "--")
-        .expect("Expected -- to separate wrapper arguments from target program");
-
-    let program = &args[separator_pos + 1];
-    let program_args = &args[separator_pos + 2..];
+    let target_separator_pos = args.iter().position(|arg| arg == "--");
+    let (program, program_args) = if let Some(pos) = target_separator_pos {
+        extract_program_and_args_from_target(args[pos + 1..].to_vec())
+            .expect("Expected target program and args after --")
+    } else {
+        let config = get_config();
+        if let Some(target) = config.and_then(|c| c.target) {
+            let program_and_args: Vec<_> = target.split_whitespace().map(String::from).collect();
+            extract_program_and_args_from_target(program_and_args).expect("No target program")
+        } else {
+            panic!("No target program")
+        }
+    };
 
     let mut stdin_log = OpenOptions::new()
         .create(true)
