@@ -37,12 +37,12 @@ impl Drop for ChildGuard {
 
 fn main() -> ExitCode {
     let cli_args = CliArgs::parse();
+    let config = get_config();
 
     let (program, program_args) = if !cli_args.target.is_empty() {
         extract_program_and_args_from_target(cli_args.target.clone())
             .expect("Cannot panic since `target` is never empty")
     } else {
-        let config = get_config();
         if let Some(target) = config.and_then(|c| c.target) {
             extract_program_and_args_from_target(vec![target.clone()]).expect("No target program")
         } else {
