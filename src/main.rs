@@ -7,8 +7,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
@@ -103,21 +103,13 @@ fn main() {
         .expect("Failed to get child stderr");
     drop(child_guard_lock);
 
-    let stream_closed = Arc::new((Mutex::new(false), Condvar::new()));
-
-    let stream_closed_clone = Arc::clone(&stream_closed);
-    spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, stream_closed_clone);
-    let stream_closed_clone = Arc::clone(&stream_closed);
-    spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log, stream_closed_clone);
-    let stream_closed_clone = Arc::clone(&stream_closed);
-    spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, stream_closed_clone);
-
-    let (stream_closed_mutex_status, stream_closed_condvar) = &*stream_closed;
-    let mut stream_closed_mutex_status_lock = stream_closed_mutex_status.lock().unwrap();
-    while !*stream_closed_mutex_status_lock {
-        stream_closed_mutex_status_lock = stream_closed_condvar
-            .wait(stream_closed_mutex_status_lock)
-            .expect("Mutex was poisoned")
+    let threads = vec![
+        spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log),
+        spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log),
+        spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log),
+    ];
+    for thread in threads {
+        thread.join().expect("Thread panicked");
     }
 
     kill_child_process_with_grace_period(&child_guard);
@@ -147,41 +139,24 @@ fn spawn_thread_for_fd(
     mut src_fd: impl Read + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
     mut log: File,
-    stream_closed: Arc<(Mutex<bool>, Condvar)>,
-) {
+) -> JoinHandle<()> {
     thread::spawn(move || {
-        let (stream_closed_mutex_status, stream_closed_condvar) = &*stream_closed;
         let mut buffer = [0; 1024];
         loop {
-            if *stream_closed_mutex_status.lock().unwrap() {
-                break;
+            let bytes_read = src_fd
+                .read(&mut buffer)
+                .expect("Failed to read from source fd");
+            if bytes_read == 0 {
+                return;
             }
-            match src_fd.read(&mut buffer) {
-                Ok(0) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-                Ok(n) => {
-                    if let Err(_) = dst_fd.write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                    if let Err(_) = log.write_all(&buffer[..n]) {
-                        *stream_closed_mutex_status.lock().unwrap() = true;
-                        stream_closed_condvar.notify_one();
-                        break;
-                    }
-                }
-                Err(_) => {
-                    *stream_closed_mutex_status.lock().unwrap() = true;
-                    stream_closed_condvar.notify_one();
-                    break;
-                }
-            }
+
+            dst_fd
+                .write_all(&buffer[..bytes_read])
+                .expect("Failed to write to destination fd");
+            log.write_all(&buffer[..bytes_read])
+                .expect("Failed to write to log file");
         }
-    });
+    })
 }
 
 fn kill_child_process_with_grace_period(child_guard: &Arc<Mutex<ChildGuard>>) -> ExitStatus {
