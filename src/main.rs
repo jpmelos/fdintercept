@@ -1,3 +1,4 @@
+use clap::Parser;
 use serde::Deserialize;
 use std::env;
 use std::fs::{File, OpenOptions};
@@ -6,6 +7,13 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+
+#[derive(Parser)]
+#[command(about, version)]
+struct CliArgs {
+    #[arg(last = true)]
+    target: Vec<String>,
+}
 
 #[derive(Deserialize)]
 struct Config {
@@ -24,11 +32,11 @@ impl Drop for ChildGuard {
 }
 
 fn main() -> io::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let target_separator_pos = args.iter().position(|arg| arg == "--");
-    let (program, program_args) = if let Some(pos) = target_separator_pos {
-        extract_program_and_args_from_target(args[pos + 1..].to_vec())
-            .expect("Expected target program and args after --")
+    let cli_args = CliArgs::parse();
+
+    let (program, program_args) = if !cli_args.target.is_empty() {
+        extract_program_and_args_from_target(cli_args.target.clone())
+            .expect("Cannot panic since `target` is never empty")
     } else {
         let config = get_config();
         if let Some(target) = config.and_then(|c| c.target) {

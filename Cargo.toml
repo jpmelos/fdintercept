@@ -2,8 +2,11 @@
 name = "fdintercept"
 version = "0.1.0"
 edition = "2024"
+description = "Intercepts and logs stdin, stdout, and stderr for any target command."
+authors = ["João Sampaio"]
 
 [dependencies]
+clap = { version = "4.5.35", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
 shlex = "1.3.0"
 toml = "0.8.20"
