@@ -76,6 +76,8 @@ cargo build --release
 - [ ] Supply target command via environment variable
 - [ ] Define log filenames via CLI
 - [ ] Define log filenames via configuration file
+- [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
+- [ ] Look for configuration in a file passed in via the command line
 - [ ] Allow intercepting arbitrary file descriptors
 
 ## License
