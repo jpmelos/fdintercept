@@ -1,12 +1,16 @@
 use clap::Parser;
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
 use serde::Deserialize;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Duration;
+use wait_timeout::ChildExt;
 
 #[derive(Parser)]
 #[command(about, version)]
@@ -26,12 +30,12 @@ struct ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.child.kill().expect("Failed to kill child process");
+        self.child.wait().unwrap();
     }
 }
 
-fn main() -> io::Result<()> {
+fn main() {
     let cli_args = CliArgs::parse();
 
     let (program, program_args) = if !cli_args.target.is_empty() {
@@ -50,32 +54,34 @@ fn main() -> io::Result<()> {
         .create(true)
         .write(true)
         .truncate(true)
-        .open("stdin.log")?;
+        .open("stdin.log")
+        .expect("Failed to create log file");
     let stdout_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open("stdout.log")?;
+        .open("stdout.log")
+        .expect("Failed to create log file");
     let stderr_log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open("stderr.log")?;
+        .open("stderr.log")
+        .expect("Failed to create log file");
 
     let child = Command::new(program)
         .args(program_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .expect("Failed to start child process");
     let child_guard = Arc::new(Mutex::new(ChildGuard { child }));
 
     let child_guard_clone = Arc::clone(&child_guard);
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
-        if let Ok(mut child_guard_lock) = child_guard_clone.lock() {
-            let _ = child_guard_lock.child.kill();
-        }
+        kill_child_process_with_grace_period(&child_guard_clone);
         default_hook(panic_info);
     }));
 
@@ -101,10 +107,8 @@ fn main() -> io::Result<()> {
 
     let stream_closed_clone = Arc::clone(&stream_closed);
     spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, stream_closed_clone);
-
     let stream_closed_clone = Arc::clone(&stream_closed);
     spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log, stream_closed_clone);
-
     let stream_closed_clone = Arc::clone(&stream_closed);
     spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, stream_closed_clone);
 
@@ -113,26 +117,10 @@ fn main() -> io::Result<()> {
     while !*stream_closed_mutex_status_lock {
         stream_closed_mutex_status_lock = stream_closed_condvar
             .wait(stream_closed_mutex_status_lock)
-            .unwrap();
+            .expect("Mutex was poisoned")
     }
 
-    let mut status = None;
-    if let Ok(mut guard) = child_guard.try_lock() {
-        if let Ok(exit_status) = guard.child.try_wait() {
-            if let Some(s) = exit_status {
-                status = Some(s);
-            }
-        }
-    }
-
-    if status.is_none() {
-        if let Ok(mut guard) = child_guard.lock() {
-            let _ = guard.child.kill();
-            status = Some(guard.child.wait()?);
-        }
-    }
-
-    std::process::exit(status.and_then(|s| s.code()).unwrap_or(1));
+    kill_child_process_with_grace_period(&child_guard);
 }
 
 fn get_config() -> Option<Config> {
@@ -194,4 +182,26 @@ fn spawn_thread_for_fd(
             }
         }
     });
+}
+
+fn kill_child_process_with_grace_period(child_guard: &Arc<Mutex<ChildGuard>>) -> ExitStatus {
+    let child = &mut child_guard.lock().unwrap().child;
+
+    if let Some(status) = child.try_wait().expect("Failed to wait for child process") {
+        return status;
+    }
+
+    let pid = Pid::from_raw(child.id() as i32);
+    kill(pid, Signal::SIGTERM).expect("Failed to send signal to child");
+
+    match child
+        .wait_timeout(Duration::from_secs(15))
+        .expect("Failed to wait for child process")
+    {
+        Some(status) => status,
+        None => {
+            child.kill().expect("Failed to kill child process");
+            child.wait().expect("Failed to wait for child process")
+        }
+    }
 }

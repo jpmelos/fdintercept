@@ -7,6 +7,8 @@ authors = ["João Sampaio"]
 
 [dependencies]
 clap = { version = "4.5.35", features = ["derive"] }
+nix = { version = "0.29.0", features = ["process", "signal"] }
 serde = { version = "1.0.219", features = ["derive"] }
 shlex = "1.3.0"
 toml = "0.8.20"
+wait-timeout = "0.2.1"
