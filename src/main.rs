@@ -194,14 +194,13 @@ fn kill_child_process_with_grace_period(child_guard: &Arc<Mutex<ChildGuard>>) ->
     let pid = Pid::from_raw(child.id() as i32);
     kill(pid, Signal::SIGTERM).expect("Failed to send signal to child");
 
-    match child
+    if let Some(status) = child
         .wait_timeout(Duration::from_secs(15))
         .expect("Failed to wait for child process")
     {
-        Some(status) => status,
-        None => {
-            child.kill().expect("Failed to kill child process");
-            child.wait().expect("Failed to wait for child process")
-        }
+        return status;
     }
+
+    child.kill().expect("Failed to kill child process");
+    child.wait().expect("Failed to wait for child process")
 }
