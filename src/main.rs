@@ -64,35 +64,6 @@ impl std::fmt::Display for ConfigTargetParseError {
 
 impl std::error::Error for ConfigTargetParseError {}
 
-#[derive(Debug)]
-enum TargetParseError {
-    CliArgs(CliArgsTargetParseError),
-    Config(ConfigTargetParseError),
-}
-
-impl std::fmt::Display for TargetParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CliArgs(e) => write!(f, "{}", e),
-            Self::Config(e) => write!(f, "{}", e),
-        }
-    }
-}
-
-impl std::error::Error for TargetParseError {}
-
-impl From<CliArgsTargetParseError> for TargetParseError {
-    fn from(error: CliArgsTargetParseError) -> Self {
-        Self::CliArgs(error)
-    }
-}
-
-impl From<ConfigTargetParseError> for TargetParseError {
-    fn from(error: ConfigTargetParseError) -> Self {
-        Self::Config(error)
-    }
-}
-
 struct Target {
     executable: NonEmptyString,
     args: Vec<String>,
@@ -209,7 +180,7 @@ fn get_config() -> Result<Option<Config>, Box<dyn std::error::Error>> {
 fn get_target_from_cli_args_or_config(
     cli_args: &CliArgs,
     config: &Option<Config>,
-) -> Result<Target, TargetParseError> {
+) -> Result<Target, Box<dyn std::error::Error>> {
     match get_target_from_cli_args(cli_args) {
         Ok(target) => return Ok(target),
         Err(CliArgsTargetParseError::NotDefined) => (),
