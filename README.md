@@ -73,7 +73,7 @@ cargo build --release
 
 - [x] Transparently intercept stdin, stdout, and stderr
 - [x] Supply target command via configuration file
-- [ ] Supply target command via environment variable
+- [ ] Supply target command via environment variable (`$FDINTERCEPT_TARGET`)
 - [ ] Define log filenames via CLI
 - [ ] Define log filenames via configuration file
 - [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
