@@ -162,7 +162,7 @@ fn spawn_thread_for_fd(
     stream_closed: Arc<(Mutex<bool>, Condvar)>,
 ) {
     thread::spawn(move || {
-        let (stream_closed_mutex_status, stream_closed_condvar) = &*(stream_closed);
+        let (stream_closed_mutex_status, stream_closed_condvar) = &*stream_closed;
         let mut buffer = [0; 1024];
         loop {
             if *stream_closed_mutex_status.lock().unwrap() {
