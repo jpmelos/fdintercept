@@ -32,8 +32,7 @@ fn main() -> io::Result<()> {
     } else {
         let config = get_config();
         if let Some(target) = config.and_then(|c| c.target) {
-            let program_and_args: Vec<_> = target.split_whitespace().map(String::from).collect();
-            extract_program_and_args_from_target(program_and_args).expect("No target program")
+            extract_program_and_args_from_target(vec![target.clone()]).expect("No target program")
         } else {
             panic!("No target program")
         }
@@ -136,13 +135,15 @@ fn get_config() -> Option<Config> {
 }
 
 fn extract_program_and_args_from_target(mut target: Vec<String>) -> Option<(String, Vec<String>)> {
+    if target.len() == 1 {
+        target = shlex::split(&target.pop().unwrap()).expect("Failed to parse target");
+    }
+
     if target.is_empty() {
         None
-    } else if target.len() == 1 {
-        Some((target.pop().unwrap(), Vec::new()))
     } else {
-        let mut iter = target.into_iter();
-        Some((iter.next().unwrap(), iter.collect()))
+        let mut target_iter = target.into_iter();
+        Some((target_iter.next().unwrap(), target_iter.collect()))
     }
 }
 
