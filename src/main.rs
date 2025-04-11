@@ -150,11 +150,16 @@ fn spawn_thread_for_fd(
                 return;
             }
 
-            dst_fd
-                .write_all(&buffer[..bytes_read])
-                .expect("Failed to write to destination fd");
             log.write_all(&buffer[..bytes_read])
                 .expect("Failed to write to log file");
+
+            match dst_fd.write_all(&buffer[..bytes_read]) {
+                Ok(_) => (),
+                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                    return;
+                }
+                Err(e) => panic!("Failed to write to destination fd: {}", e),
+            }
         }
     })
 }
