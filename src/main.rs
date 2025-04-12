@@ -126,18 +126,32 @@ fn main() -> Result<()> {
 
     thread::scope(|scope| {
         let threads = vec![
-            scope.spawn(|| process_fd(io::stdin(), child_stdin, stdin_log, "stdin")),
-            scope.spawn(|| process_fd(child_stdout, io::stdout(), stdout_log, "stdout")),
-            scope.spawn(|| process_fd(child_stderr, io::stderr(), stderr_log, "stderr")),
-            scope.spawn(|| process_signals(signals, mutex_child_guard.clone())),
+            (
+                scope.spawn(|| process_fd(io::stdin(), child_stdin, stdin_log, "stdin")),
+                "process_fd:stdin",
+            ),
+            (
+                scope.spawn(|| process_fd(child_stdout, io::stdout(), stdout_log, "stdout")),
+                "process_fd:stdout",
+            ),
+            (
+                scope.spawn(|| process_fd(child_stderr, io::stderr(), stderr_log, "stderr")),
+                "process_fd:stderr",
+            ),
+            (
+                scope.spawn(|| process_signals(signals, mutex_child_guard.clone())),
+                "process_signals",
+            ),
         ];
         let _: Vec<()> = threads
             .into_iter()
-            .map(|handle| {
+            .map(|(handle, thread_name)| {
                 handle
                     .join()
-                    .map_err(|e| eprintln!("Error joining thread: {:?}", e))
-                    .and_then(|result| result.map_err(|e| eprintln!("Thread error: {:?}", e)))
+                    .map_err(|e| eprintln!("Error joining thread {}: {:?}", thread_name, e))
+                    .and_then(|result| {
+                        result.map_err(|e| eprintln!("Error in thread {}: {:?}", thread_name, e))
+                    })
                     .unwrap_or(())
             })
             .collect();
