@@ -67,54 +67,9 @@ fn main() -> Result<()> {
         && cli_args.stdout_log.is_none()
         && cli_args.stderr_log.is_none();
 
-    let stdin_log = if use_defaults || cli_args.stdin_log.is_some() {
-        Some(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(
-                    cli_args
-                        .stdin_log
-                        .unwrap_or_else(|| PathBuf::from("stdin.log")),
-                )
-                .context("Error creating stdin log file")?,
-        )
-    } else {
-        None
-    };
-    let stdout_log = if use_defaults || cli_args.stdout_log.is_some() {
-        Some(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(
-                    cli_args
-                        .stdout_log
-                        .unwrap_or_else(|| PathBuf::from("stdout.log")),
-                )
-                .context("Error creating stdout log file")?,
-        )
-    } else {
-        None
-    };
-    let stderr_log = if use_defaults || cli_args.stderr_log.is_some() {
-        Some(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(
-                    cli_args
-                        .stderr_log
-                        .unwrap_or_else(|| PathBuf::from("stderr.log")),
-                )
-                .context("Error creating stderr log file")?,
-        )
-    } else {
-        None
-    };
+    let stdin_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stdin.log")?;
+    let stdout_log = maybe_create_log_file(use_defaults, &cli_args.stdout_log, "stdout.log")?;
+    let stderr_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stderr.log")?;
 
     let child = Command::new(String::from(target.executable))
         .args(target.args)
@@ -314,6 +269,28 @@ fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseEr
             .map_err(|_| ConfigTargetParseError::EmptyExecutable)?,
         args: target_vec.tail,
     })
+}
+
+fn maybe_create_log_file(
+    use_defaults: bool,
+    maybe_log_name: &Option<PathBuf>,
+    default_name: &str,
+) -> Result<Option<File>> {
+    if use_defaults || maybe_log_name.is_some() {
+        let log_name = maybe_log_name
+            .as_ref()
+            .map_or_else(|| PathBuf::from(default_name), |p| p.clone());
+        Ok(Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&log_name)
+                .context(format!("Error creating log file {:?}", log_name))?,
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
 fn spawn_thread_for_fd(
