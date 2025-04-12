@@ -8,9 +8,9 @@ target command.
 - Wraps any command and captures all I/O via stdin, stdout, and stderr.
 - Logs each stream to separate files.
 - Supports target command configuration via the CLI, an environment variable,
-  or a configuration file (`~/.fdinterceptrc.toml`).
+  or a configuration file.
 - Preserves original program exit codes.
-- Handles program termination gracefully.
+- Handles process and child process termination gracefully.
 
 ## Installation
 
@@ -38,7 +38,8 @@ fdintercept -- your-command [args...]
 FDINTERCEPT_TARGET="your-command [args...]" fdintercept
 ```
 
-3. Via configuration file (`~/.fdinterceptrc.toml`):
+3. Via configuration file (see [Configuration](#configuration) below for
+   details):
 
 ```toml
 target = "your-command [args...]"
@@ -97,8 +98,12 @@ fdintercept -- python script.py arg1 arg2
 
 ## Configuration
 
-It is also possible to set target and log files via a configuration file called
-`~/fdinterceptrc.toml`.
+It is also possible to set target and log files via a configuration file.
+
+fdintercept will look for configuration in these locations, in this order:
+
+- `~/fdinterceptrc.toml`
+- `$XDG_CONFIG_HOME/fdintercept/rc.toml`
 
 Here are the accepted fields:
 
@@ -143,7 +148,7 @@ cargo build --release
 - [x] Supply target command via environment variable (`$FDINTERCEPT_TARGET`)
 - [x] Define log filenames via CLI
 - [x] Define log filenames via configuration file
-- [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
+- [x] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
 - [ ] Look for configuration in a file passed in via the command line
 - [ ] Look for configuration in a file passed in via an environment variable
   (`$FDINTERCEPTRC`)

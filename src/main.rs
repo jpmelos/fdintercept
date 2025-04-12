@@ -193,21 +193,65 @@ fn main() -> Result<()> {
 }
 
 fn get_config() -> Result<Config> {
-    let home = env::var("HOME").context("Error getting HOME environment variable")?;
-    let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
-
-    let contents = match std::fs::read_to_string(&config_path) {
-        Ok(contents) => contents,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::from(""),
+    let home_contents = match env::var("HOME") {
+        Ok(home) => {
+            let home_path = PathBuf::from(home).join(".fdinterceptrc.toml");
+            match std::fs::read_to_string(&home_path) {
+                Ok(contents) => Some(contents),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    eprintln!(
+                        "Error reading configuration file {}: {:?}",
+                        home_path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        }
+        Err(std::env::VarError::NotPresent) => None,
         Err(e) => {
-            return Err(e).context(format!(
-                "Error reading configuration file: {}",
-                config_path.display()
-            ));
+            eprintln!("Error reading HOME environment variable: {:?}", e);
+            None
         }
     };
 
-    Ok(toml::from_str(&contents).context("Error parsing TOML configuration")?)
+    let xdg_contents = if home_contents.is_some() {
+        None
+    } else {
+        match env::var("XDG_CONFIG_HOME") {
+            Ok(xdg_config_home) => {
+                let xdg_path = PathBuf::from(xdg_config_home)
+                    .join("fdintercept")
+                    .join("rc.toml");
+                match std::fs::read_to_string(&xdg_path) {
+                    Ok(contents) => Some(contents),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => {
+                        eprintln!(
+                            "Error reading configuration file {}: {:?}",
+                            xdg_path.display(),
+                            e
+                        );
+                        None
+                    }
+                }
+            }
+            Err(std::env::VarError::NotPresent) => None,
+            Err(e) => {
+                eprintln!(
+                    "Error reading XDG_CONFIG_HOME environment variable: {:?}",
+                    e
+                );
+                None
+            }
+        }
+    };
+
+    Ok(
+        toml::from_str(&home_contents.or(xdg_contents).unwrap_or_default())
+            .context("Error parsing TOML configuration")?,
+    )
 }
 
 fn get_target(
