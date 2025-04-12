@@ -233,7 +233,6 @@ fn get_target_from_env_var(env_var: &str) -> Result<Target, EnvVarTargetParseErr
     if env_var.is_empty() {
         return Err(EnvVarTargetParseError::Empty);
     }
-
     let tokenized_target = shlex::split(env_var).ok_or(EnvVarTargetParseError::FailedToTokenize)?;
     // unwrap: Safe because we already ensure that target is not empty.
     let target_vec = NonEmpty::from_vec(tokenized_target).unwrap();
@@ -273,7 +272,6 @@ fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseEr
     if target.is_empty() {
         return Err(ConfigTargetParseError::Empty);
     }
-
     let tokenized_target = shlex::split(target).ok_or(ConfigTargetParseError::FailedToTokenize)?;
     // unwrap: Safe because we already ensure that target is not empty.
     let target_vec = NonEmpty::from_vec(tokenized_target).unwrap();
@@ -293,17 +291,16 @@ fn maybe_create_log_file(
         let log_name = maybe_log_name
             .as_ref()
             .map_or_else(|| PathBuf::from(default_name), |p| p.clone());
-        Ok(Some(
+        return Ok(Some(
             OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
                 .open(&log_name)
                 .context(format!("Error creating log file {:?}", log_name))?,
-        ))
-    } else {
-        Ok(None)
+        ));
     }
+    Ok(None)
 }
 
 fn spawn_thread_for_fd(
