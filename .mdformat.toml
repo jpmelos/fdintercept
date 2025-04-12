@@ -1,0 +1,4 @@
+wrap = 79
+number = true
+end_of_line = "keep"
+validate = true
