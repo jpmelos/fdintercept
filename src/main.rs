@@ -10,7 +10,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use wait_timeout::ChildExt;
@@ -47,13 +46,34 @@ struct ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        if let Err(e) = self.child.kill() {
-            eprintln!("Error sending signal to child process: {}", e);
-        }
-        if let Err(e) = self.child.wait() {
-            eprintln!("Error waiting for child process: {}", e);
+        if let Err(e) = kill_child_process_with_grace_period(&mut self.child) {
+            eprintln!("Error cleaning up child process: {}", e);
         }
     }
+}
+
+fn kill_child_process_with_grace_period(child: &mut Child) -> Result<ExitStatus> {
+    if let Some(status) = child
+        .try_wait()
+        .context("Error waiting for child process")?
+    {
+        return Ok(status);
+    }
+
+    kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM)
+        .context("Error sending signal to child process")?;
+
+    if let Some(status) = child
+        .wait_timeout(Duration::from_secs(15))
+        .context("Error waiting for child process")?
+    {
+        return Ok(status);
+    }
+
+    child
+        .kill()
+        .context("Error sending signal to child process")?;
+    child.wait().context("Error waiting for child process")
 }
 
 fn main() -> Result<()> {
@@ -71,34 +91,26 @@ fn main() -> Result<()> {
     let stdout_log = maybe_create_log_file(use_defaults, &cli_args.stdout_log, "stdout.log")?;
     let stderr_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stderr.log")?;
 
-    let child = Command::new(String::from(target.executable))
-        .args(target.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Error starting child process")?;
-    let child_guard = Arc::new(Mutex::new(ChildGuard { child }));
-
-    let child_guard_clone = Arc::clone(&child_guard);
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        if let Err(e) = kill_child_process_with_grace_period(&child_guard_clone) {
-            eprintln!("Error while cleaning up child process during panic: {}", e);
-        }
-        default_hook(panic_info);
-    }));
-
-    let (stdin, stdout, stderr) = {
-        let mut child_guard_lock = child_guard
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Error acquiring lock for child process: {}", e))?;
-        let child = &mut child_guard_lock.child;
-        (child.stdin.take(), child.stdout.take(), child.stderr.take())
+    let mut child_guard = ChildGuard {
+        child: Command::new(String::from(target.executable))
+            .args(target.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Error starting child process")?,
     };
-    let child_stdin = stdin.context("Error taking stdin of child")?;
-    let child_stdout = stdout.context("Error taking stdout of child")?;
-    let child_stderr = stderr.context("Error taking stderr of child")?;
+    let child = &mut child_guard.child;
+
+    let child_stdin = child.stdin.take().context("Error taking stdin of child")?;
+    let child_stdout = child
+        .stdout
+        .take()
+        .context("Error taking stdout of child")?;
+    let child_stderr = child
+        .stderr
+        .take()
+        .context("Error taking stderr of child")?;
 
     let threads = vec![
         spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, "stdin"),
@@ -113,8 +125,9 @@ fn main() -> Result<()> {
     }
 
     std::process::exit(
-        kill_child_process_with_grace_period(&child_guard)
-            .context("Error killing child")?
+        child
+            .wait()
+            .context("Error waiting for child")?
             .code()
             .unwrap_or(1),
     );
@@ -381,35 +394,4 @@ fn spawn_thread_for_fd_without_logging(
             }
         }
     })
-}
-
-fn kill_child_process_with_grace_period(
-    child_guard: &Arc<Mutex<ChildGuard>>,
-) -> Result<ExitStatus> {
-    let mut child_guard_lock = child_guard
-        .lock()
-        .map_err(|e| anyhow::anyhow!("Error acquiring lock for child process: {}", e))?;
-    let child = &mut child_guard_lock.child;
-
-    if let Some(status) = child
-        .try_wait()
-        .context("Error waiting for child process")?
-    {
-        return Ok(status);
-    }
-
-    kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM)
-        .context("Error sending signal to child process")?;
-
-    if let Some(status) = child
-        .wait_timeout(Duration::from_secs(15))
-        .context("Error waiting for child process")?
-    {
-        return Ok(status);
-    }
-
-    child
-        .kill()
-        .context("Error sending signal to child process")?;
-    child.wait().context("Error waiting for child process")
 }
