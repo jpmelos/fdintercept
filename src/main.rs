@@ -171,13 +171,13 @@ fn main() -> Result<()> {
     );
 }
 
-fn get_config() -> Result<Option<Config>> {
+fn get_config() -> Result<Config> {
     let home = env::var("HOME").context("Error getting HOME environment variable")?;
     let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
 
     let contents = match std::fs::read_to_string(&config_path) {
         Ok(contents) => contents,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::from(""),
         Err(e) => {
             return Err(e).context(format!(
                 "Error reading configuration file: {}",
@@ -186,15 +186,13 @@ fn get_config() -> Result<Option<Config>> {
         }
     };
 
-    Ok(Some(
-        toml::from_str(&contents).context("Error parsing TOML configuration")?,
-    ))
+    Ok(toml::from_str(&contents).context("Error parsing TOML configuration")?)
 }
 
 fn get_target(
     cli_args: &CliArgs,
     maybe_env_var: &Option<String>,
-    maybe_config: &Option<Config>,
+    config: &Config,
 ) -> Result<Target> {
     match get_target_from_cli_args(cli_args) {
         Ok(target) => return Ok(target),
@@ -207,9 +205,10 @@ fn get_target(
             .context("Error getting target environment variable")?);
     }
 
-    if let Some(config) = maybe_config {
-        return Ok(get_target_from_config(config)
-            .context("Error getting target from configuration file")?);
+    match get_target_from_config(config) {
+        Ok(target) => return Ok(target),
+        Err(ConfigTargetParseError::NotDefined) => (),
+        Err(e) => return Err(e).context("Error getting target from configuration file"),
     }
 
     Err(anyhow::anyhow!(
