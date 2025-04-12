@@ -6,6 +6,7 @@ description = "Intercepts and logs stdin, stdout, and stderr for any target comm
 authors = ["João Sampaio"]
 
 [dependencies]
+anyhow = "1.0.97"
 clap = { version = "4.5.35", features = ["derive"] }
 nix = { version = "0.29.0", features = ["process", "signal"] }
 non-empty-string = "0.2.6"
