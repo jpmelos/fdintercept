@@ -160,9 +160,9 @@ cargo build --release
 - [x] Look for configuration in a file passed in via the command line
 - [x] Look for configuration in a file passed in via an environment variable
   (`$FDINTERCEPTRC`)
-- [ ] Allow intercepting arbitrary file descriptors
 - [ ] Allow definition of message schemas, add separators between messages
 - [ ] Add timestamps to messages
+- [ ] Allow intercepting arbitrary file descriptors
 
 ## License
 
