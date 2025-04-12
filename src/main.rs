@@ -287,7 +287,7 @@ fn get_config(cli_args: &CliArgs) -> Result<Config> {
 }
 
 fn parse_config_contents(contents: &str) -> Result<Config> {
-    Ok(toml::from_str(&contents).context("Error parsing TOML configuration")?)
+    toml::from_str(contents).context("Error parsing TOML configuration")
 }
 
 fn get_target(
@@ -302,8 +302,8 @@ fn get_target(
     };
 
     if let Some(env_var) = maybe_env_var {
-        return Ok(get_target_from_env_var(env_var)
-            .context("Error getting target environment variable")?);
+        return get_target_from_env_var(env_var)
+            .context("Error getting target environment variable");
     }
 
     match get_target_from_config(config) {
@@ -438,15 +438,13 @@ fn create_log_file(
             },
             |p| Some(p.clone()),
         )
-        .map_or(None, |path| {
-            Some(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&path)
-                    .context(format!("Error creating log file {:?}", path)),
-            )
+        .map(|path| {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .context(format!("Error creating log file {:?}", path))
         })
         .transpose()
 }
