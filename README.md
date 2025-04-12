@@ -110,7 +110,11 @@ cargo build --release
 - [ ] Define log filenames via configuration file
 - [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
 - [ ] Look for configuration in a file passed in via the command line
+- [ ] Look for configuration in a file passed in via an environment variable
+  (`$FDINTERCEPTRC`)
 - [ ] Allow intercepting arbitrary file descriptors
+- [ ] Allow definition of message schemas, add separators between messages
+- [ ] Add timestamps to messages
 
 ## License
 
