@@ -93,9 +93,9 @@ fn main() -> Result<()> {
         && cli_args.stdout_log.is_none()
         && cli_args.stderr_log.is_none();
 
-    let stdin_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stdin.log")?;
-    let stdout_log = maybe_create_log_file(use_defaults, &cli_args.stdout_log, "stdout.log")?;
-    let stderr_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stderr.log")?;
+    let stdin_log = create_log_file(use_defaults, &cli_args.stderr_log, "stdin.log")?;
+    let stdout_log = create_log_file(use_defaults, &cli_args.stdout_log, "stdout.log")?;
+    let stderr_log = create_log_file(use_defaults, &cli_args.stderr_log, "stderr.log")?;
 
     if let Some(signal) = signals.pending().next() {
         std::process::exit(128 + signal);
@@ -161,7 +161,7 @@ fn get_config() -> Result<Option<Config>> {
     let home = env::var("HOME").context("Error getting HOME environment variable")?;
     let config_path = PathBuf::from(home).join(".fdinterceptrc.toml");
 
-    let config_contents = match std::fs::read_to_string(&config_path) {
+    let contents = match std::fs::read_to_string(&config_path) {
         Ok(contents) => contents,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
@@ -173,7 +173,7 @@ fn get_config() -> Result<Option<Config>> {
     };
 
     Ok(Some(
-        toml::from_str(&config_contents).context("Error parsing TOML configuration")?,
+        toml::from_str(&contents).context("Error parsing TOML configuration")?,
     ))
 }
 
@@ -306,7 +306,7 @@ fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseEr
     })
 }
 
-fn maybe_create_log_file(
+fn create_log_file(
     use_defaults: bool,
     maybe_log_name: &Option<PathBuf>,
     default_name: &str,
