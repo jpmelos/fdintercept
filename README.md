@@ -64,11 +64,30 @@ The program creates three log files in the current directory:
 - `stdout.log`: Contains all standard output from the program.
 - `stderr.log`: Contains all error output from the program.
 
-## Example
+## CLI arguments
+
+fdintercept accepts some CLI arguments.
+
+- `--stdin-log`: Filename of the log file that will record stdin traffic. if
+  relative, this is relative to the current working directory. Default:
+  `stdin.log`.
+- `--stdout-log`: Filename of the log file that will record stdout traffic. if
+  relative, this is relative to the current working directory. Default:
+  `stdout.log`.
+- `--stderr-log`: Filename of the log file that will record stderr traffic. if
+  relative, this is relative to the current working directory. Default:
+  `stderr.log`.
+- After `--`: the target command to be wrapped by fdintercept.
+
+If at least one of `--stdin-log`, `--stdout-log`, and `--stderr-log` is
+specified, only the specified log files will be created. If none are specified,
+they will all be created with their default values.
+
+### Example
 
 ```bash
-# Log all I/O for curl.
-fdintercept -- curl https://example.com
+# Log all I/O for curl. Save the stdout
+fdintercept --stdout-log /tmp/stdout.log -- curl https://example.com
 
 # Log all I/O for a Python script.
 fdintercept -- python script.py arg1 arg2
@@ -87,7 +106,7 @@ cargo build --release
 - [x] Transparently intercept stdin, stdout, and stderr
 - [x] Supply target command via configuration file
 - [x] Supply target command via environment variable (`$FDINTERCEPT_TARGET`)
-- [ ] Define log filenames via CLI
+- [x] Define log filenames via CLI
 - [ ] Define log filenames via configuration file
 - [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
 - [ ] Look for configuration in a file passed in via the command line

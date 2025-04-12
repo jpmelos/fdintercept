@@ -18,6 +18,15 @@ use wait_timeout::ChildExt;
 #[derive(Parser)]
 #[command(about, version)]
 struct CliArgs {
+    #[arg(long)]
+    stdin_log: Option<PathBuf>,
+
+    #[arg(long)]
+    stdout_log: Option<PathBuf>,
+
+    #[arg(long)]
+    stderr_log: Option<PathBuf>,
+
     #[arg(last = true)]
     target: Vec<String>,
 }
@@ -54,24 +63,58 @@ fn main() -> Result<()> {
 
     let target = get_target(&cli_args, &env_var, &config).context("Error getting target")?;
 
-    let stdin_log = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("stdin.log")
-        .context("Error creating stdin log file")?;
-    let stdout_log = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("stdout.log")
-        .context("Error creating stdout log file")?;
-    let stderr_log = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("stderr.log")
-        .context("Error creating stderr log file")?;
+    let use_defaults = cli_args.stdin_log.is_none()
+        && cli_args.stdout_log.is_none()
+        && cli_args.stderr_log.is_none();
+
+    let stdin_log = if use_defaults || cli_args.stdin_log.is_some() {
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(
+                    cli_args
+                        .stdin_log
+                        .unwrap_or_else(|| PathBuf::from("stdin.log")),
+                )
+                .context("Error creating stdin log file")?,
+        )
+    } else {
+        None
+    };
+    let stdout_log = if use_defaults || cli_args.stdout_log.is_some() {
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(
+                    cli_args
+                        .stdout_log
+                        .unwrap_or_else(|| PathBuf::from("stdout.log")),
+                )
+                .context("Error creating stdout log file")?,
+        )
+    } else {
+        None
+    };
+    let stderr_log = if use_defaults || cli_args.stderr_log.is_some() {
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(
+                    cli_args
+                        .stderr_log
+                        .unwrap_or_else(|| PathBuf::from("stderr.log")),
+                )
+                .context("Error creating stderr log file")?,
+        )
+    } else {
+        None
+    };
 
     let child = Command::new(String::from(target.executable))
         .args(target.args)
@@ -103,9 +146,9 @@ fn main() -> Result<()> {
     let child_stderr = stderr.context("Error taking stderr of child")?;
 
     let threads = vec![
-        spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log),
-        spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log),
-        spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log),
+        spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, "stdin"),
+        spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log, "stdout"),
+        spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, "stderr"),
     ];
     for thread in threads {
         thread
@@ -274,29 +317,90 @@ fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseEr
 }
 
 fn spawn_thread_for_fd(
+    src_fd: impl Read + Send + 'static,
+    dst_fd: impl Write + Send + 'static,
+    maybe_log: Option<File>,
+    log_descriptor: &'static str,
+) -> JoinHandle<Result<()>> {
+    if let Some(log) = maybe_log {
+        return spawn_thread_for_fd_with_logging(src_fd, dst_fd, log, log_descriptor);
+    }
+    spawn_thread_for_fd_without_logging(src_fd, dst_fd, log_descriptor)
+}
+
+fn spawn_thread_for_fd_with_logging(
     mut src_fd: impl Read + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
     mut log: File,
+    log_descriptor: &'static str,
 ) -> JoinHandle<Result<()>> {
     thread::spawn(move || {
         let mut buffer = [0; 1024];
+        let mut logging_enabled = true;
+
         loop {
-            let bytes_read = src_fd
-                .read(&mut buffer)
-                .context("Error reading from source stream")?;
+            let bytes_read = src_fd.read(&mut buffer).context(format!(
+                "Error reading from {} source stream",
+                log_descriptor
+            ))?;
             if bytes_read == 0 {
                 return Ok(());
             }
 
-            log.write_all(&buffer[..bytes_read])
-                .context("Error writing to log file")?;
+            if logging_enabled {
+                if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+                    eprintln!(
+                        "Error writing to {} log, disabling logging: {}",
+                        log_descriptor, e
+                    );
+                    logging_enabled = false;
+                }
+            }
 
             match dst_fd.write_all(&buffer[..bytes_read]) {
                 Ok(_) => (),
                 Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
                     return Ok(());
                 }
-                Err(e) => return Err(anyhow::anyhow!("Error writing to destination fd: {}", e)),
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Error writing to {} destination stream: {}",
+                        log_descriptor,
+                        e
+                    ));
+                }
+            }
+        }
+    })
+}
+fn spawn_thread_for_fd_without_logging(
+    mut src_fd: impl Read + Send + 'static,
+    mut dst_fd: impl Write + Send + 'static,
+    log_descriptor: &'static str,
+) -> JoinHandle<Result<()>> {
+    thread::spawn(move || {
+        let mut buffer = [0; 1024];
+        loop {
+            let bytes_read = src_fd.read(&mut buffer).context(format!(
+                "Error reading from {} source stream",
+                log_descriptor
+            ))?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
+
+            match dst_fd.write_all(&buffer[..bytes_read]) {
+                Ok(_) => (),
+                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                    return Ok(());
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Error writing to {} destination stream: {}",
+                        log_descriptor,
+                        e
+                    ));
+                }
             }
         }
     })
