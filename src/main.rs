@@ -422,31 +422,26 @@ fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseEr
 
 fn create_log_file(
     use_defaults: bool,
-    maybe_cli_log_name: &Option<PathBuf>,
-    maybe_config_log_name: &Option<PathBuf>,
+    cli_path: &Option<PathBuf>,
+    config_path: &Option<PathBuf>,
     default_name: &str,
 ) -> Result<Option<File>> {
-    maybe_cli_log_name
-        .as_ref()
-        .or(maybe_config_log_name.as_ref())
-        .map_or_else(
-            || {
-                if use_defaults {
-                    return Some(PathBuf::from(default_name));
-                }
-                None
-            },
-            |p| Some(p.clone()),
-        )
-        .map(|path| {
+    let path = match (cli_path, config_path) {
+        (Some(p), _) => Some(p.clone()),
+        (None, Some(p)) => Some(p.clone()),
+        (None, None) if use_defaults => Some(PathBuf::from(default_name)),
+        _ => None,
+    };
+    match path {
+        Some(p) => Ok(Some(
             OpenOptions::new()
                 .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&path)
-                .context(format!("Error creating log file {:?}", path))
-        })
-        .transpose()
+                .append(true)
+                .open(&p)
+                .context(format!("Failed to create/open log file: {}", p.display()))?,
+        )),
+        None => Ok(None),
+    }
 }
 
 fn process_fd(
