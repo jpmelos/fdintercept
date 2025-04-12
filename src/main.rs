@@ -22,48 +22,10 @@ struct CliArgs {
     target: Vec<String>,
 }
 
-#[derive(Debug)]
-enum CliArgsTargetParseError {
-    NotDefined,
-    EmptyExecutable,
-}
-
-impl std::fmt::Display for CliArgsTargetParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotDefined => write!(f, "Target is not defined"),
-            Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
-        }
-    }
-}
-
-impl std::error::Error for CliArgsTargetParseError {}
-
 #[derive(Deserialize)]
 struct Config {
     target: Option<String>,
 }
-
-#[derive(Debug)]
-enum ConfigTargetParseError {
-    NotDefined,
-    FailedToTokenize,
-    Empty,
-    EmptyExecutable,
-}
-
-impl std::fmt::Display for ConfigTargetParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotDefined => write!(f, "Target is not defined"),
-            Self::FailedToTokenize => write!(f, "Failed to tokenize target"),
-            Self::Empty => write!(f, "Target cannot be empty"),
-            Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigTargetParseError {}
 
 struct Target {
     executable: NonEmptyString,
@@ -87,10 +49,10 @@ impl Drop for ChildGuard {
 
 fn main() -> Result<()> {
     let cli_args = CliArgs::parse();
+    let env_var = env::var("FDINTERCEPT_TARGET").ok();
     let config = get_config().context("Error reading configuration")?;
 
-    let target =
-        get_target_from_cli_args_or_config(&cli_args, &config).context("Error getting target")?;
+    let target = get_target(&cli_args, &env_var, &config).context("Error getting target")?;
 
     let stdin_log = OpenOptions::new()
         .create(true)
@@ -180,25 +142,49 @@ fn get_config() -> Result<Option<Config>> {
     ))
 }
 
-fn get_target_from_cli_args_or_config(
+fn get_target(
     cli_args: &CliArgs,
-    config: &Option<Config>,
+    maybe_env_var: &Option<String>,
+    maybe_config: &Option<Config>,
 ) -> Result<Target> {
     match get_target_from_cli_args(cli_args) {
         Ok(target) => return Ok(target),
         Err(CliArgsTargetParseError::NotDefined) => (),
         Err(e) => return Err(e).context("Error getting target from CLI arguments"),
     };
-    match config {
-        Some(cfg) => {
-            Ok(get_target_from_config(cfg)
-                .context("Error getting target from configuration file")?)
+
+    if let Some(env_var) = maybe_env_var {
+        return Ok(get_target_from_env_var(env_var)
+            .context("Error getting target environment variable")?);
+    }
+
+    if let Some(config) = maybe_config {
+        return Ok(get_target_from_config(config)
+            .context("Error getting target from configuration file")?);
+    }
+
+    Err(anyhow::anyhow!(
+        "Target not defined in CLI arguments, FDINTERCEPT_TARGET environment variable, or \
+         configuration file"
+    ))
+}
+
+#[derive(Debug)]
+enum CliArgsTargetParseError {
+    NotDefined,
+    EmptyExecutable,
+}
+
+impl std::fmt::Display for CliArgsTargetParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDefined => write!(f, "Target is not defined"),
+            Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
         }
-        None => Err(anyhow::anyhow!(
-            "Target not defined in CLI arguments and configuration file"
-        )),
     }
 }
+
+impl std::error::Error for CliArgsTargetParseError {}
 
 fn get_target_from_cli_args(cli_args: &CliArgs) -> Result<Target, CliArgsTargetParseError> {
     if cli_args.target.is_empty() {
@@ -213,15 +199,73 @@ fn get_target_from_cli_args(cli_args: &CliArgs) -> Result<Target, CliArgsTargetP
     })
 }
 
+#[derive(Debug)]
+enum EnvVarTargetParseError {
+    Empty,
+    FailedToTokenize,
+    EmptyExecutable,
+}
+
+impl std::fmt::Display for EnvVarTargetParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "FDINTERCEPT_TARGET cannot be empty"),
+            Self::FailedToTokenize => write!(f, "Failed to tokenize FDINTERCEPT_TARGET"),
+            Self::EmptyExecutable => write!(f, "FDINTERCEPT_TARGET executable cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for EnvVarTargetParseError {}
+
+fn get_target_from_env_var(env_var: &str) -> Result<Target, EnvVarTargetParseError> {
+    if env_var.is_empty() {
+        return Err(EnvVarTargetParseError::Empty);
+    }
+
+    let tokenized_target = shlex::split(env_var).ok_or(EnvVarTargetParseError::FailedToTokenize)?;
+    // unwrap: Safe because we already ensure that target is not empty.
+    let target_vec = NonEmpty::from_vec(tokenized_target).unwrap();
+    Ok(Target {
+        executable: NonEmptyString::new(target_vec.head)
+            .map_err(|_| EnvVarTargetParseError::EmptyExecutable)?,
+        args: target_vec.tail,
+    })
+}
+
+#[derive(Debug)]
+enum ConfigTargetParseError {
+    Empty,
+    NotDefined,
+    FailedToTokenize,
+    EmptyExecutable,
+}
+
+impl std::fmt::Display for ConfigTargetParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDefined => write!(f, "Target is not defined"),
+            Self::FailedToTokenize => write!(f, "Failed to tokenize target"),
+            Self::Empty => write!(f, "Target cannot be empty"),
+            Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigTargetParseError {}
+
 fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseError> {
-    let tokenized_target = shlex::split(
-        config
-            .target
-            .as_ref()
-            .ok_or(ConfigTargetParseError::NotDefined)?,
-    )
-    .ok_or(ConfigTargetParseError::FailedToTokenize)?;
-    let target_vec = NonEmpty::from_vec(tokenized_target).ok_or(ConfigTargetParseError::Empty)?;
+    let target = config
+        .target
+        .as_ref()
+        .ok_or(ConfigTargetParseError::NotDefined)?;
+    if target.is_empty() {
+        return Err(ConfigTargetParseError::Empty);
+    }
+
+    let tokenized_target = shlex::split(target).ok_or(ConfigTargetParseError::FailedToTokenize)?;
+    // unwrap: Safe because we already ensure that target is not empty.
+    let target_vec = NonEmpty::from_vec(tokenized_target).unwrap();
     Ok(Target {
         executable: NonEmptyString::new(target_vec.head)
             .map_err(|_| ConfigTargetParseError::EmptyExecutable)?,

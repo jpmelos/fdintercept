@@ -7,7 +7,8 @@ target command.
 
 - Wraps any command and captures all I/O via stdin, stdout, and stderr.
 - Logs each stream to separate files.
-- Supports target command configuration via `~/.fdinterceptrc.toml`.
+- Supports target command configuration via the CLI, an environment variable,
+  or a configuration file (`~/.fdinterceptrc.toml`).
 - Preserves original program exit codes.
 - Handles program termination gracefully.
 
@@ -31,7 +32,13 @@ There are two ways to use fdintercept:
 fdintercept -- your-command [args...]
 ```
 
-2. Via configuration file (`~/.fdinterceptrc.toml`):
+2. Via environment variable:
+
+```bash
+FDINTERCEPT_TARGET="your-command [args...]" fdintercept
+```
+
+3. Via configuration file (`~/.fdinterceptrc.toml`):
 
 ```toml
 target = "your-command [args...]"
@@ -42,6 +49,12 @@ Then simply run:
 ```bash
 fdintercept
 ```
+
+The order of precedence in how the target is defined is:
+
+1. Command line arguments
+2. Environment variable
+3. Configuration file
 
 ## Output
 
@@ -73,7 +86,7 @@ cargo build --release
 
 - [x] Transparently intercept stdin, stdout, and stderr
 - [x] Supply target command via configuration file
-- [ ] Supply target command via environment variable (`$FDINTERCEPT_TARGET`)
+- [x] Supply target command via environment variable (`$FDINTERCEPT_TARGET`)
 - [ ] Define log filenames via CLI
 - [ ] Define log filenames via configuration file
 - [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
