@@ -194,8 +194,9 @@ fn get_target_from_cli_args_or_config(
             Ok(get_target_from_config(cfg)
                 .context("Error getting target from configuration file")?)
         }
-        None => Err(ConfigTargetParseError::NotDefined)
-            .context("Target not defined in configuration file"),
+        None => Err(anyhow::anyhow!(
+            "Target not defined in CLI arguments and configuration file"
+        )),
     }
 }
 
