@@ -24,7 +24,7 @@ cargo install --path .
 
 ## Usage
 
-There are two ways to use fdintercept:
+There are three ways to use fdintercept:
 
 1. Direct command line usage:
 
@@ -67,15 +67,18 @@ The program creates three log files in the current directory:
 
 ## CLI arguments
 
-fdintercept accepts the following CLI arguments.
+fdintercept accepts the following CLI arguments:
 
-- `--stdin-log`: Filename of the log file that will record stdin traffic. if
+- `--conf`: Path to a configuration file. This has the highest precedence over
+  all other configuration sources. If relative, this is relative to the current
+  working directory.
+- `--stdin-log`: Filename of the log file that will record stdin traffic. If
   relative, this is relative to the current working directory. Default:
   `stdin.log`.
-- `--stdout-log`: Filename of the log file that will record stdout traffic. if
+- `--stdout-log`: Filename of the log file that will record stdout traffic. If
   relative, this is relative to the current working directory. Default:
   `stdout.log`.
-- `--stderr-log`: Filename of the log file that will record stderr traffic. if
+- `--stderr-log`: Filename of the log file that will record stderr traffic. If
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
 - After `--`: the target command to be wrapped by fdintercept.
@@ -94,27 +97,32 @@ fdintercept --stdout-log /tmp/stdout.log -- python script.py arg1 arg2
 
 # Log all stdin, stdout, and stderr I/O for a Python script.
 fdintercept -- python script.py arg1 arg2
+
+# Use a specific configuration file
+fdintercept --conf /path/to/config.toml
 ```
 
 ## Configuration
 
-It is also possible to set target and log files via a configuration file.
+It is possible to set target and log files via a configuration file.
 
 fdintercept will look for configuration in these locations, in this order:
 
-- `~/fdinterceptrc.toml`
-- `$XDG_CONFIG_HOME/fdintercept/rc.toml`
+1. Path specified via `--conf` CLI argument
+2. Path specified in `$FDINTERCEPTRC` environment variable
+3. `~/.fdinterceptrc.toml`
+4. `$XDG_CONFIG_HOME/fdintercept/rc.toml`
 
 Here are the accepted fields:
 
 - `target`: The target command that needs to be executed.
-- `stdin_log`: Filename of the log file that will record stdin traffic. if
+- `stdin_log`: Filename of the log file that will record stdin traffic. If
   relative, this is relative to the current working directory. Default:
   `stdin.log`.
-- `stdout_log`: Filename of the log file that will record stdout traffic. if
+- `stdout_log`: Filename of the log file that will record stdout traffic. If
   relative, this is relative to the current working directory. Default:
   `stdout.log`.
-- `stderr_log`: Filename of the log file that will record stderr traffic. if
+- `stderr_log`: Filename of the log file that will record stderr traffic. If
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
 
@@ -149,8 +157,8 @@ cargo build --release
 - [x] Define log filenames via CLI
 - [x] Define log filenames via configuration file
 - [x] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
-- [ ] Look for configuration in a file passed in via the command line
-- [ ] Look for configuration in a file passed in via an environment variable
+- [x] Look for configuration in a file passed in via the command line
+- [x] Look for configuration in a file passed in via an environment variable
   (`$FDINTERCEPTRC`)
 - [ ] Allow intercepting arbitrary file descriptors
 - [ ] Allow definition of message schemas, add separators between messages

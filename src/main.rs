@@ -21,6 +21,9 @@ use wait_timeout::ChildExt;
 #[command(about, version)]
 struct CliArgs {
     #[arg(long)]
+    conf: Option<PathBuf>,
+
+    #[arg(long)]
     stdin_log: Option<PathBuf>,
 
     #[arg(long)]
@@ -88,7 +91,7 @@ fn main() -> Result<()> {
 
     let cli_args = CliArgs::parse();
     let env_var = env::var("FDINTERCEPT_TARGET").ok();
-    let config = get_config().context("Error reading configuration")?;
+    let config = get_config(&cli_args).context("Error reading configuration")?;
 
     let target = get_target(&cli_args, &env_var, &config).context("Error getting target")?;
 
@@ -192,7 +195,41 @@ fn main() -> Result<()> {
     );
 }
 
-fn get_config() -> Result<Config> {
+fn get_config(cli_args: &CliArgs) -> Result<Config> {
+    if let Some(path) = cli_args.conf.clone() {
+        return std::fs::read_to_string(&path)
+            .context(format!(
+                "Error reading configuration file {}",
+                path.display()
+            ))
+            .and_then(|contents| parse_config_contents(&contents));
+    }
+
+    let env_contents = match env::var("FDINTERCEPTRC") {
+        Ok(path) => {
+            let path = PathBuf::from(path);
+            match std::fs::read_to_string(&path) {
+                Ok(contents) => Some(contents),
+                Err(e) => {
+                    eprintln!(
+                        "Error reading configuration file {}: {:?}",
+                        path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        }
+        Err(std::env::VarError::NotPresent) => None,
+        Err(e) => {
+            eprintln!("Error reading FDINTERCEPTRC environment variable: {:?}", e);
+            None
+        }
+    };
+    if let Some(contents) = env_contents {
+        return parse_config_contents(&contents);
+    }
+
     let home_contents = match env::var("HOME") {
         Ok(home) => {
             let home_path = PathBuf::from(home).join(".fdinterceptrc.toml");
@@ -215,43 +252,42 @@ fn get_config() -> Result<Config> {
             None
         }
     };
+    if let Some(contents) = home_contents {
+        return parse_config_contents(&contents);
+    }
 
-    let xdg_contents = if home_contents.is_some() {
-        None
-    } else {
-        match env::var("XDG_CONFIG_HOME") {
-            Ok(xdg_config_home) => {
-                let xdg_path = PathBuf::from(xdg_config_home)
-                    .join("fdintercept")
-                    .join("rc.toml");
-                match std::fs::read_to_string(&xdg_path) {
-                    Ok(contents) => Some(contents),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => {
-                        eprintln!(
-                            "Error reading configuration file {}: {:?}",
-                            xdg_path.display(),
-                            e
-                        );
-                        None
-                    }
+    let xdg_contents = match env::var("XDG_CONFIG_HOME") {
+        Ok(xdg_config_home) => {
+            let xdg_path = PathBuf::from(xdg_config_home)
+                .join("fdintercept")
+                .join("rc.toml");
+            match std::fs::read_to_string(&xdg_path) {
+                Ok(contents) => Some(contents),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    eprintln!(
+                        "Error reading configuration file {}: {:?}",
+                        xdg_path.display(),
+                        e
+                    );
+                    None
                 }
             }
-            Err(std::env::VarError::NotPresent) => None,
-            Err(e) => {
-                eprintln!(
-                    "Error reading XDG_CONFIG_HOME environment variable: {:?}",
-                    e
-                );
-                None
-            }
+        }
+        Err(std::env::VarError::NotPresent) => None,
+        Err(e) => {
+            eprintln!(
+                "Error reading XDG_CONFIG_HOME environment variable: {:?}",
+                e
+            );
+            None
         }
     };
+    parse_config_contents(&xdg_contents.unwrap_or_default())
+}
 
-    Ok(
-        toml::from_str(&home_contents.or(xdg_contents).unwrap_or_default())
-            .context("Error parsing TOML configuration")?,
-    )
+fn parse_config_contents(contents: &str) -> Result<Config> {
+    Ok(toml::from_str(&contents).context("Error parsing TOML configuration")?)
 }
 
 fn get_target(
