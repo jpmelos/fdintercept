@@ -56,7 +56,7 @@ The order of precedence in how the target is defined is:
 2. Environment variable
 3. Configuration file
 
-## Output
+### Output
 
 The program creates three log files in the current directory:
 
@@ -66,7 +66,7 @@ The program creates three log files in the current directory:
 
 ## CLI arguments
 
-fdintercept accepts some CLI arguments.
+fdintercept accepts the following CLI arguments.
 
 - `--stdin-log`: Filename of the log file that will record stdin traffic. if
   relative, this is relative to the current working directory. Default:
@@ -81,16 +81,51 @@ fdintercept accepts some CLI arguments.
 
 If at least one of `--stdin-log`, `--stdout-log`, and `--stderr-log` is
 specified, only the specified log files will be created. If none are specified,
-they will all be created with their default values.
+they will all be created with their default values. (These can be mixed with
+the configuration file fields and if any log filenames are specified there, the
+defaults won't be created either.)
 
 ### Example
 
 ```bash
-# Log all I/O for curl. Save the stdout
-fdintercept --stdout-log /tmp/stdout.log -- curl https://example.com
+# Log all stdout I/O for a Python script.
+fdintercept --stdout-log /tmp/stdout.log -- python script.py arg1 arg2
 
-# Log all I/O for a Python script.
+# Log all stdin, stdout, and stderr I/O for a Python script.
 fdintercept -- python script.py arg1 arg2
+```
+
+## Configuration
+
+It is also possible to set target and log files via a configuration file called
+`~/fdinterceptrc.toml`.
+
+Here are the accepted fields:
+
+- `target`: The target command that needs to be executed.
+- `stdin_log`: Filename of the log file that will record stdin traffic. if
+  relative, this is relative to the current working directory. Default:
+  `stdin.log`.
+- `stdout_log`: Filename of the log file that will record stdout traffic. if
+  relative, this is relative to the current working directory. Default:
+  `stdout.log`.
+- `stderr_log`: Filename of the log file that will record stderr traffic. if
+  relative, this is relative to the current working directory. Default:
+  `stderr.log`.
+
+If at least one of `stdin_log`, `stdout_log`, and `stderr_log` is specified,
+only the specified log files will be created. If none are specified, they will
+all be created with their default values. (These can be mixed with the CLI
+arguments for log filenames and if any log filenames are specified there, the
+defaults won't be created either.)
+
+### Example
+
+This will make fdintercept log all stdout I/O for a Python script:
+
+```toml
+target = "python script.py arg1 arg2"
+stdout_log = "/tmp/stdout.log"
 ```
 
 ## Building from Source
@@ -107,7 +142,7 @@ cargo build --release
 - [x] Supply target command via configuration file
 - [x] Supply target command via environment variable (`$FDINTERCEPT_TARGET`)
 - [x] Define log filenames via CLI
-- [ ] Define log filenames via configuration file
+- [x] Define log filenames via configuration file
 - [ ] Look for configuration in `$XDG_CONFIG_HOME/fdintercept/rc.toml`
 - [ ] Look for configuration in a file passed in via the command line
 - [ ] Look for configuration in a file passed in via an environment variable

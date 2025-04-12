@@ -36,6 +36,9 @@ struct CliArgs {
 #[derive(Deserialize)]
 struct Config {
     target: Option<String>,
+    stdin_log: Option<PathBuf>,
+    stdout_log: Option<PathBuf>,
+    stderr_log: Option<PathBuf>,
 }
 
 struct Target {
@@ -91,11 +94,29 @@ fn main() -> Result<()> {
 
     let use_defaults = cli_args.stdin_log.is_none()
         && cli_args.stdout_log.is_none()
-        && cli_args.stderr_log.is_none();
+        && cli_args.stderr_log.is_none()
+        && config.stdin_log.is_none()
+        && config.stdout_log.is_none()
+        && config.stderr_log.is_none();
 
-    let stdin_log = create_log_file(use_defaults, &cli_args.stderr_log, "stdin.log")?;
-    let stdout_log = create_log_file(use_defaults, &cli_args.stdout_log, "stdout.log")?;
-    let stderr_log = create_log_file(use_defaults, &cli_args.stderr_log, "stderr.log")?;
+    let stdin_log = create_log_file(
+        use_defaults,
+        &cli_args.stdin_log,
+        &config.stdin_log,
+        "stdin.log",
+    )?;
+    let stdout_log = create_log_file(
+        use_defaults,
+        &cli_args.stdout_log,
+        &config.stdout_log,
+        "stdout.log",
+    )?;
+    let stderr_log = create_log_file(
+        use_defaults,
+        &cli_args.stderr_log,
+        &config.stderr_log,
+        "stderr.log",
+    )?;
 
     if let Some(signal) = signals.pending().next() {
         std::process::exit(128 + signal);
@@ -321,23 +342,33 @@ fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseEr
 
 fn create_log_file(
     use_defaults: bool,
-    maybe_log_name: &Option<PathBuf>,
+    maybe_cli_log_name: &Option<PathBuf>,
+    maybe_config_log_name: &Option<PathBuf>,
     default_name: &str,
 ) -> Result<Option<File>> {
-    if use_defaults || maybe_log_name.is_some() {
-        let log_name = maybe_log_name
-            .as_ref()
-            .map_or_else(|| PathBuf::from(default_name), |p| p.clone());
-        return Ok(Some(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&log_name)
-                .context(format!("Error creating log file {:?}", log_name))?,
-        ));
-    }
-    Ok(None)
+    maybe_cli_log_name
+        .as_ref()
+        .or(maybe_config_log_name.as_ref())
+        .map_or_else(
+            || {
+                if use_defaults {
+                    return Some(PathBuf::from(default_name));
+                }
+                None
+            },
+            |p| Some(p.clone()),
+        )
+        .map_or(None, |path| {
+            Some(
+                OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&path)
+                    .context(format!("Error creating log file {:?}", path)),
+            )
+        })
+        .transpose()
 }
 
 fn process_fd(
