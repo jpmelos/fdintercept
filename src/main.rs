@@ -13,7 +13,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
@@ -124,18 +124,24 @@ fn main() -> Result<()> {
 
     let mutex_child_guard = Arc::new(Mutex::new(child_guard));
 
-    let threads = vec![
-        spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, "stdin"),
-        spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log, "stdout"),
-        spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, "stderr"),
-        spawn_signal_processing_thread(signals, mutex_child_guard.clone()),
-    ];
-    for thread in threads {
-        thread
-            .join()
-            .map_err(|e| anyhow::anyhow!("Error joining thread: {:?}", e))?
-            .context("Error in stream threads")?;
-    }
+    thread::scope(|scope| {
+        let threads = vec![
+            scope.spawn(|| process_fd(io::stdin(), child_stdin, stdin_log, "stdin")),
+            scope.spawn(|| process_fd(child_stdout, io::stdout(), stdout_log, "stdout")),
+            scope.spawn(|| process_fd(child_stderr, io::stderr(), stderr_log, "stderr")),
+            scope.spawn(|| process_signals(signals, mutex_child_guard.clone())),
+        ];
+        let _: Vec<()> = threads
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|e| eprintln!("Error joining thread: {:?}", e))
+                    .and_then(|result| result.map_err(|e| eprintln!("Thread error: {:?}", e)))
+                    .unwrap_or(())
+            })
+            .collect();
+    });
 
     std::process::exit(
         mutex_child_guard
@@ -321,109 +327,103 @@ fn maybe_create_log_file(
     Ok(None)
 }
 
-fn spawn_thread_for_fd(
+fn process_fd(
     src_fd: impl Read + Send + 'static,
     dst_fd: impl Write + Send + 'static,
     maybe_log: Option<File>,
     log_descriptor: &'static str,
-) -> JoinHandle<Result<()>> {
+) -> Result<()> {
     if let Some(log) = maybe_log {
-        return spawn_thread_for_fd_with_logging(src_fd, dst_fd, log, log_descriptor);
+        return process_fd_with_logging(src_fd, dst_fd, log, log_descriptor);
     }
-    spawn_thread_for_fd_without_logging(src_fd, dst_fd, log_descriptor)
+    process_fd_without_logging(src_fd, dst_fd, log_descriptor)
 }
 
-fn spawn_thread_for_fd_with_logging(
+fn process_fd_with_logging(
     mut src_fd: impl Read + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
     mut log: File,
     log_descriptor: &'static str,
-) -> JoinHandle<Result<()>> {
-    thread::spawn(move || {
-        let mut buffer = [0; 1024];
-        let mut logging_enabled = true;
+) -> Result<()> {
+    let mut buffer = [0; 1024];
+    let mut logging_enabled = true;
 
-        loop {
-            let bytes_read = src_fd.read(&mut buffer).context(format!(
-                "Error reading from {} source stream",
-                log_descriptor
-            ))?;
-            if bytes_read == 0 {
-                return Ok(());
-            }
+    loop {
+        let bytes_read = src_fd.read(&mut buffer).context(format!(
+            "Error reading from {} source stream",
+            log_descriptor
+        ))?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
 
-            if logging_enabled {
-                if let Err(e) = log.write_all(&buffer[..bytes_read]) {
-                    eprintln!(
-                        "Error writing to {} log, disabling logging: {}",
-                        log_descriptor, e
-                    );
-                    logging_enabled = false;
-                }
-            }
-
-            match dst_fd.write_all(&buffer[..bytes_read]) {
-                Ok(_) => (),
-                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                    return Ok(());
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Error writing to {} destination stream: {}",
-                        log_descriptor,
-                        e
-                    ));
-                }
+        if logging_enabled {
+            if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+                eprintln!(
+                    "Error writing to {} log, disabling logging: {}",
+                    log_descriptor, e
+                );
+                logging_enabled = false;
             }
         }
-    })
+
+        match dst_fd.write_all(&buffer[..bytes_read]) {
+            Ok(_) => (),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Error writing to {} destination stream: {}",
+                    log_descriptor,
+                    e
+                ));
+            }
+        }
+    }
 }
 
-fn spawn_thread_for_fd_without_logging(
+fn process_fd_without_logging(
     mut src_fd: impl Read + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
     log_descriptor: &'static str,
-) -> JoinHandle<Result<()>> {
-    thread::spawn(move || {
-        let mut buffer = [0; 1024];
-        loop {
-            let bytes_read = src_fd.read(&mut buffer).context(format!(
-                "Error reading from {} source stream",
-                log_descriptor
-            ))?;
-            if bytes_read == 0 {
+) -> Result<()> {
+    let mut buffer = [0; 1024];
+    loop {
+        let bytes_read = src_fd.read(&mut buffer).context(format!(
+            "Error reading from {} source stream",
+            log_descriptor
+        ))?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+
+        match dst_fd.write_all(&buffer[..bytes_read]) {
+            Ok(_) => (),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
                 return Ok(());
             }
-
-            match dst_fd.write_all(&buffer[..bytes_read]) {
-                Ok(_) => (),
-                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                    return Ok(());
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Error writing to {} destination stream: {}",
-                        log_descriptor,
-                        e
-                    ));
-                }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Error writing to {} destination stream: {}",
+                    log_descriptor,
+                    e
+                ));
             }
         }
-    })
+    }
 }
 
-fn spawn_signal_processing_thread(
+fn process_signals(
     mut signals: SignalsInfo,
     mutex_child_guard: Arc<Mutex<ChildGuard>>,
-) -> JoinHandle<Result<()>> {
-    thread::spawn(move || {
-        // unwrap: Safe because `signals.forever()` is never empty.
-        // unwrap: Safe because this instance of `signals` only receives `SIGTERM`, `SIGINT`, and
-        // `SIGHUP`, and they are guaranteed to parse into a valid signal.
-        let signal = Signal::try_from(signals.forever().next().unwrap()).unwrap();
-        // unwrap: Safe because whenever this thread is running, we're waiting for it to finish,
-        // and we're never holding the lock.
-        kill_child_process_with_grace_period(&mut mutex_child_guard.lock().unwrap().child, signal)?;
-        Ok(())
-    })
+) -> Result<()> {
+    // unwrap: Safe because `signals.forever()` is never empty.
+    // unwrap: Safe because this instance of `signals` only receives `SIGTERM`, `SIGINT`,
+    // and `SIGHUP`, and they are guaranteed to parse into a valid signal.
+    let signal = Signal::try_from(signals.forever().next().unwrap()).unwrap();
+    // unwrap: Safe because whenever this thread is running, we're waiting for it to
+    // finish, and we're never holding the lock.
+    kill_child_process_with_grace_period(&mut mutex_child_guard.lock().unwrap().child, signal)?;
+    Ok(())
 }
