@@ -5,11 +5,14 @@ use nix::unistd::Pid;
 use non_empty_string::NonEmptyString;
 use nonempty::NonEmpty;
 use serde::Deserialize;
+use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::iterator::{Signals, SignalsInfo};
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use wait_timeout::ChildExt;
@@ -46,13 +49,13 @@ struct ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        if let Err(e) = kill_child_process_with_grace_period(&mut self.child) {
+        if let Err(e) = kill_child_process_with_grace_period(&mut self.child, Signal::SIGTERM) {
             eprintln!("Error cleaning up child process: {}", e);
         }
     }
 }
 
-fn kill_child_process_with_grace_period(child: &mut Child) -> Result<ExitStatus> {
+fn kill_child_process_with_grace_period(child: &mut Child, signal: Signal) -> Result<ExitStatus> {
     if let Some(status) = child
         .try_wait()
         .context("Error waiting for child process")?
@@ -60,7 +63,7 @@ fn kill_child_process_with_grace_period(child: &mut Child) -> Result<ExitStatus>
         return Ok(status);
     }
 
-    kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM)
+    kill(Pid::from_raw(child.id() as i32), signal)
         .context("Error sending signal to child process")?;
 
     if let Some(status) = child
@@ -77,6 +80,9 @@ fn kill_child_process_with_grace_period(child: &mut Child) -> Result<ExitStatus>
 }
 
 fn main() -> Result<()> {
+    let mut signals =
+        Signals::new([SIGTERM, SIGINT, SIGHUP]).context("Failed to register signal handlers")?;
+
     let cli_args = CliArgs::parse();
     let env_var = env::var("FDINTERCEPT_TARGET").ok();
     let config = get_config().context("Error reading configuration")?;
@@ -90,6 +96,10 @@ fn main() -> Result<()> {
     let stdin_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stdin.log")?;
     let stdout_log = maybe_create_log_file(use_defaults, &cli_args.stdout_log, "stdout.log")?;
     let stderr_log = maybe_create_log_file(use_defaults, &cli_args.stderr_log, "stderr.log")?;
+
+    if let Some(signal) = signals.pending().next() {
+        std::process::exit(128 + signal);
+    }
 
     let mut child_guard = ChildGuard {
         child: Command::new(String::from(target.executable))
@@ -112,10 +122,13 @@ fn main() -> Result<()> {
         .take()
         .context("Error taking stderr of child")?;
 
+    let mutex_child_guard = Arc::new(Mutex::new(child_guard));
+
     let threads = vec![
         spawn_thread_for_fd(io::stdin(), child_stdin, stdin_log, "stdin"),
         spawn_thread_for_fd(child_stdout, io::stdout(), stdout_log, "stdout"),
         spawn_thread_for_fd(child_stderr, io::stderr(), stderr_log, "stderr"),
+        spawn_signal_processing_thread(signals, mutex_child_guard.clone()),
     ];
     for thread in threads {
         thread
@@ -125,7 +138,12 @@ fn main() -> Result<()> {
     }
 
     std::process::exit(
-        child
+        mutex_child_guard
+            .lock()
+            // unwrap: Safe because if we got here, the only other instance of `mutex_child_guard`
+            // is dead, since it lived inside one of the threads that we already joined into.
+            .unwrap()
+            .child
             .wait()
             .context("Error waiting for child")?
             .code()
@@ -360,6 +378,7 @@ fn spawn_thread_for_fd_with_logging(
         }
     })
 }
+
 fn spawn_thread_for_fd_without_logging(
     mut src_fd: impl Read + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
@@ -390,5 +409,21 @@ fn spawn_thread_for_fd_without_logging(
                 }
             }
         }
+    })
+}
+
+fn spawn_signal_processing_thread(
+    mut signals: SignalsInfo,
+    mutex_child_guard: Arc<Mutex<ChildGuard>>,
+) -> JoinHandle<Result<()>> {
+    thread::spawn(move || {
+        // unwrap: Safe because `signals.forever()` is never empty.
+        // unwrap: Safe because this instance of `signals` only receives `SIGTERM`, `SIGINT`, and
+        // `SIGHUP`, and they are guaranteed to parse into a valid signal.
+        let signal = Signal::try_from(signals.forever().next().unwrap()).unwrap();
+        // unwrap: Safe because whenever this thread is running, we're waiting for it to finish,
+        // and we're never holding the lock.
+        kill_child_process_with_grace_period(&mut mutex_child_guard.lock().unwrap().child, signal)?;
+        Ok(())
     })
 }

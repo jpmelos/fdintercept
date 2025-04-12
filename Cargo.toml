@@ -13,5 +13,6 @@ non-empty-string = "0.2.6"
 nonempty = "0.11.0"
 serde = { version = "1.0.219", features = ["derive"] }
 shlex = "1.3.0"
+signal-hook = "0.3.17"
 toml = "0.8.20"
 wait-timeout = "0.2.1"
