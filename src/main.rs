@@ -163,8 +163,9 @@ fn main() -> Result<()> {
         .context("Error taking stderr of child")?;
 
     let mutex_child_guard = Arc::new(Mutex::new(child_guard));
+    let mutex_child_guard_clone = mutex_child_guard.clone();
 
-    thread::scope(|scope| {
+    thread::scope(move |scope| {
         let (tx, rx) = mpsc::channel();
 
         spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stdin", || {
@@ -177,7 +178,7 @@ fn main() -> Result<()> {
             process_fd(child_stderr, io::stderr(), stderr_log, "stderr")
         });
         spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_signals", || {
-            process_signals(signals, mutex_child_guard.clone())
+            process_signals(signals, mutex_child_guard_clone)
         });
 
         while let Ok((thread_name, handle)) = rx.recv() {
