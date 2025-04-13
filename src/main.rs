@@ -167,16 +167,16 @@ fn main() -> Result<()> {
     thread::scope(|scope| {
         let (tx, rx) = mpsc::channel();
 
-        spawn_thread_in_scope(scope, tx.clone(), "process_fd:stdin", || {
+        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stdin", || {
             process_fd(io::stdin(), child_stdin, stdin_log, "stdin")
         });
-        spawn_thread_in_scope(scope, tx.clone(), "process_fd:stdout", || {
+        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stdout", || {
             process_fd(child_stdout, io::stdout(), stdout_log, "stdout")
         });
-        spawn_thread_in_scope(scope, tx.clone(), "process_fd:stderr", || {
+        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stderr", || {
             process_fd(child_stderr, io::stderr(), stderr_log, "stderr")
         });
-        spawn_thread_in_scope(scope, tx.clone(), "process_signals", || {
+        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_signals", || {
             process_signals(signals, mutex_child_guard.clone())
         });
 
@@ -445,7 +445,7 @@ fn create_log_file(
     }
 }
 
-fn spawn_thread_in_scope<'scope, F>(
+fn spawn_self_shipping_thread_in_scope<'scope, F>(
     scope: &'scope thread::Scope<'scope, '_>,
     tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
     thread_name: &'static str,
