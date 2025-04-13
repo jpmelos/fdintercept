@@ -456,14 +456,17 @@ fn spawn_self_shipping_thread_in_scope<'scope, F>(
 {
     let (handle_tx, handle_rx) = mpsc::channel();
 
-    let handle = scope.spawn(move || {
-        let result = func();
-        // unwrap: Safe because `handle_tx` is guaranteed to have sent the handle.
-        let handle = handle_rx.recv().unwrap();
-        // unwrap: Safe because the receiving side is guaranteed to still be connected.
-        tx.send((thread_name, handle)).unwrap();
-        result
-    });
+    let handle = std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn_scoped(scope, move || {
+            let result = func();
+            // unwrap: Safe because `handle_tx` is guaranteed to have sent the handle.
+            let handle = handle_rx.recv().unwrap();
+            // unwrap: Safe because the receiving side is guaranteed to still be connected.
+            tx.send((thread_name, handle)).unwrap();
+            result
+        })
+        .unwrap();
 
     // unwrap: Safe because `handle_rx` is guaranteed to be connected.
     handle_tx.send(handle).unwrap();
