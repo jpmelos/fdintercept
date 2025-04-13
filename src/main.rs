@@ -125,12 +125,10 @@ fn main() -> Result<()> {
         "stderr.log",
     )?;
 
-    // Don't even start the child process if we were already told to terminate.
+    // Don't even start the child process if we were already told to terminate. We can ignore
+    // `SIGCHLD` here since we don't have a child process yet.
     if let Some(signum) = signals.pending().next() {
-        match signum {
-            SIGTERM | SIGHUP | SIGINT => std::process::exit(128 + signum),
-            _ => (),
-        }
+        std::process::exit(128 + signum);
     }
 
     let mut child_guard = ChildGuard {
