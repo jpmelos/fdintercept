@@ -171,7 +171,7 @@ fn main() -> Result<()> {
                 "process_signals",
             ),
         ];
-        let _: Vec<()> = threads
+        let _: Vec<_> = threads
             .into_iter()
             .map(|(handle, thread_name)| {
                 handle
@@ -192,10 +192,9 @@ fn main() -> Result<()> {
             // is dead, since it lived inside one of the threads that we already joined into.
             .unwrap()
             .child
-            .wait()
+            .try_wait()
             .context("Error waiting for child")?
-            .code()
-            .unwrap_or(1),
+            .map_or(1, |status| status.code().unwrap_or(1)),
     );
 }
 
