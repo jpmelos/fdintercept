@@ -82,7 +82,10 @@ fn kill_child_process_with_grace_period(child: &mut Child, signal: Signal) -> Re
     child
         .kill()
         .context("Error sending signal to child process")?;
-    child.wait().context("Error waiting for child process")
+    child
+        .wait_timeout(Duration::from_secs(5))
+        .context("Error waiting for child process")?
+        .ok_or_else(|| anyhow::anyhow!("Sent SIGKILL, child still alive"))
 }
 
 fn main() -> Result<()> {
