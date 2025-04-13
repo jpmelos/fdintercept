@@ -5,7 +5,7 @@ use nix::unistd::Pid;
 use non_empty_string::NonEmptyString;
 use nonempty::NonEmpty;
 use serde::Deserialize;
-use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::consts::{SIGCHLD, SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::{Signals, SignalsInfo};
 use std::env;
 use std::fs::{File, OpenOptions};
@@ -89,8 +89,8 @@ fn kill_child_process_with_grace_period(child: &mut Child, signal: Signal) -> Re
 }
 
 fn main() -> Result<()> {
-    let mut signals =
-        Signals::new([SIGTERM, SIGINT, SIGHUP]).context("Failed to register signal handlers")?;
+    let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM, SIGCHLD])
+        .context("Failed to register signal handlers")?;
 
     let cli_args = CliArgs::parse();
     let env_var = env::var("FDINTERCEPT_TARGET").ok();
@@ -125,8 +125,11 @@ fn main() -> Result<()> {
     )?;
 
     // Don't even start the child process if we were already told to terminate.
-    if let Some(signal) = signals.pending().next() {
-        std::process::exit(128 + signal);
+    if let Some(signum) = signals.pending().next() {
+        match signum {
+            SIGTERM | SIGHUP | SIGINT => std::process::exit(128 + signum),
+            _ => (),
+        }
     }
 
     let mut child_guard = ChildGuard {
@@ -539,11 +542,15 @@ fn process_signals(
     mutex_child_guard: Arc<Mutex<ChildGuard>>,
 ) -> Result<()> {
     // unwrap: Safe because `signals.forever()` is never empty.
-    // unwrap: Safe because this instance of `signals` only receives `SIGTERM`, `SIGINT`,
-    // and `SIGHUP`, and they are guaranteed to parse into a valid signal.
-    let signal = Signal::try_from(signals.forever().next().unwrap()).unwrap();
-    // unwrap: Safe because whenever this thread is running, we're waiting for it to
-    // finish, and we're never holding the lock.
-    kill_child_process_with_grace_period(&mut mutex_child_guard.lock().unwrap().child, signal)?;
+    if let signum @ (SIGHUP | SIGINT | SIGTERM) = signals.forever().next().unwrap() {
+        kill_child_process_with_grace_period(
+            // unwrap: Safe because whenever this thread is running, we're waiting for it to
+            // finish, and we're never holding the lock.
+            &mut mutex_child_guard.lock().unwrap().child,
+            // unwrap: Safe because this instance of `signals` only receives `SIGHUP`, `SIGINT`,
+            // `SIGTERM`, and `SIGCHLD`, and they are guaranteed to parse into a valid signal.
+            Signal::try_from(signum).unwrap(),
+        )?;
+    }
     Ok(())
 }
