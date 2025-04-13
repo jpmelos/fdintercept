@@ -12,6 +12,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -213,7 +214,16 @@ fn main() -> Result<()> {
             .child
             .try_wait()
             .context("Error waiting for child")?
-            .map_or(1, |status| status.code().unwrap_or(1)),
+            .map_or(1, |status| {
+                if let Some(code) = status.code() {
+                    code
+                } else if let Some(signum) = status.signal() {
+                    128 + signum
+                } else {
+                    eprintln!("Error getting child process status");
+                    1
+                }
+            }),
     );
 }
 
