@@ -677,8 +677,9 @@ fn process_signals(
             Signal::try_from(signum).unwrap(),
         )?;
     }
-    // unwrap: Safe because either the receiving end is still waiting to get a message, or it has
-    // been already closed because the thread that owned it already died, and then we don't care.
-    nix::unistd::write(signal_tx, &[1]).unwrap();
+    // We don't care about an error here, because either the receiving end is still waiting to get
+    // a message, or it has been already closed because the thread that owned it already died, and
+    // then we don't care.
+    let _ = nix::unistd::write(signal_tx, &[1]);
     Ok(())
 }
