@@ -12,8 +12,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, ScopedJoinHandle};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
@@ -156,36 +157,30 @@ fn main() -> Result<()> {
     let mutex_child_guard = Arc::new(Mutex::new(child_guard));
 
     thread::scope(|scope| {
-        let threads = vec![
-            (
-                scope.spawn(|| process_fd(io::stdin(), child_stdin, stdin_log, "stdin")),
-                "process_fd:stdin",
-            ),
-            (
-                scope.spawn(|| process_fd(child_stdout, io::stdout(), stdout_log, "stdout")),
-                "process_fd:stdout",
-            ),
-            (
-                scope.spawn(|| process_fd(child_stderr, io::stderr(), stderr_log, "stderr")),
-                "process_fd:stderr",
-            ),
-            (
-                scope.spawn(|| process_signals(signals, mutex_child_guard.clone())),
-                "process_signals",
-            ),
-        ];
-        let _: Vec<_> = threads
-            .into_iter()
-            .map(|(handle, thread_name)| {
-                handle
-                    .join()
-                    .map_err(|e| eprintln!("Error joining thread {}: {:?}", thread_name, e))
-                    .and_then(|result| {
-                        result.map_err(|e| eprintln!("Error in thread {}: {:?}", thread_name, e))
-                    })
-                    .unwrap_or(())
-            })
-            .collect();
+        let (tx, rx) = mpsc::channel();
+
+        spawn_thread_in_scope(scope, tx.clone(), "process_fd:stdin", || {
+            process_fd(io::stdin(), child_stdin, stdin_log, "stdin")
+        });
+        spawn_thread_in_scope(scope, tx.clone(), "process_fd:stdout", || {
+            process_fd(child_stdout, io::stdout(), stdout_log, "stdout")
+        });
+        spawn_thread_in_scope(scope, tx.clone(), "process_fd:stderr", || {
+            process_fd(child_stderr, io::stderr(), stderr_log, "stderr")
+        });
+        spawn_thread_in_scope(scope, tx.clone(), "process_signals", || {
+            process_signals(signals, mutex_child_guard.clone())
+        });
+
+        while let Ok((thread_name, handle)) = rx.recv() {
+            match handle.join() {
+                Ok(result) => match result {
+                    Ok(_) => (),
+                    Err(e) => eprintln!("Error in thread {}: {:?}", thread_name, e),
+                },
+                Err(e) => eprintln!("Error joining thread: {:?}", e),
+            }
+        }
     });
 
     std::process::exit(
@@ -450,6 +445,29 @@ fn create_log_file(
     }
 }
 
+fn spawn_thread_in_scope<'scope, F>(
+    scope: &'scope thread::Scope<'scope, '_>,
+    tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
+    thread_name: &'static str,
+    func: F,
+) where
+    F: FnOnce() -> Result<()> + Send + 'scope,
+{
+    let (handle_tx, handle_rx) = mpsc::channel();
+
+    let handle = scope.spawn(move || {
+        let result = func();
+        // unwrap: Safe because `handle_tx` is guaranteed to have sent the handle.
+        let handle = handle_rx.recv().unwrap();
+        // unwrap: Safe because the receiving side is guaranteed to still be connected.
+        tx.send((thread_name, handle)).unwrap();
+        result
+    });
+
+    // unwrap: Safe because `handle_rx` is guaranteed to be connected.
+    handle_tx.send(handle).unwrap();
+}
+
 fn process_fd(
     src_fd: impl Read + Send + 'static,
     dst_fd: impl Write + Send + 'static,
@@ -544,8 +562,8 @@ fn process_signals(
     // unwrap: Safe because `signals.forever()` is never empty.
     if let signum @ (SIGHUP | SIGINT | SIGTERM) = signals.forever().next().unwrap() {
         kill_child_process_with_grace_period(
-            // unwrap: Safe because whenever this thread is running, we're waiting for it to
-            // finish, and we're never holding the lock.
+            // unwrap: Safe because if this thread is running, the main thread is waiting for it to
+            // finish, so it can't be holding this lock.
             &mut mutex_child_guard.lock().unwrap().child,
             // unwrap: Safe because this instance of `signals` only receives `SIGHUP`, `SIGINT`,
             // `SIGTERM`, and `SIGCHLD`, and they are guaranteed to parse into a valid signal.
