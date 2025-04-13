@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use nix::sys::signal::{Signal, kill};
-use nix::unistd::Pid;
+use nix::unistd::{Pid, pipe};
 use non_empty_string::NonEmptyString;
 use nonempty::NonEmpty;
 use serde::Deserialize;
@@ -10,6 +10,8 @@ use signal_hook::iterator::{Signals, SignalsInfo};
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::fd::OwnedFd;
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -141,6 +143,8 @@ fn main() -> Result<()> {
         std::process::exit(128 + signum);
     }
 
+    let (signal_rx, signal_tx) = pipe().context("Error creating pipe")?;
+
     let mut child_guard = ChildGuard {
         child: Command::new(String::from(target.executable))
             .args(target.args)
@@ -166,22 +170,30 @@ fn main() -> Result<()> {
     let mutex_child_guard_clone = mutex_child_guard.clone();
 
     thread::scope(move |scope| {
-        let (tx, rx) = mpsc::channel();
+        let (handle_tx, handle_rx) = mpsc::channel();
 
-        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stdin", || {
-            process_fd(io::stdin(), child_stdin, stdin_log, "stdin")
+        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_fd:stdin", || {
+            process_fd(
+                io::stdin(),
+                child_stdin,
+                stdin_log,
+                "stdin",
+                Some(signal_rx),
+            )
         });
-        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stdout", || {
-            process_fd(child_stdout, io::stdout(), stdout_log, "stdout")
+        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_fd:stdout", || {
+            process_fd(child_stdout, io::stdout(), stdout_log, "stdout", None)
         });
-        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_fd:stderr", || {
-            process_fd(child_stderr, io::stderr(), stderr_log, "stderr")
+        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_fd:stderr", || {
+            process_fd(child_stderr, io::stderr(), stderr_log, "stderr", None)
         });
-        spawn_self_shipping_thread_in_scope(scope, tx.clone(), "process_signals", || {
-            process_signals(signals, mutex_child_guard_clone)
+        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_signals", || {
+            process_signals(signals, mutex_child_guard_clone, signal_tx)
         });
 
-        while let Ok((thread_name, handle)) = rx.recv() {
+        drop(handle_tx);
+
+        while let Ok((thread_name, handle)) = handle_rx.recv() {
             match handle.join() {
                 Ok(result) => match result {
                     Ok(_) => (),
@@ -473,87 +485,177 @@ fn spawn_self_shipping_thread_in_scope<'scope, F>(
 }
 
 fn process_fd(
-    src_fd: impl Read + Send + 'static,
+    src_fd: impl Read + AsRawFd + Send + 'static,
     dst_fd: impl Write + Send + 'static,
     maybe_log: Option<File>,
     log_descriptor: &'static str,
+    maybe_signal_rx: Option<OwnedFd>,
 ) -> Result<()> {
     if let Some(log) = maybe_log {
-        return process_fd_with_logging(src_fd, dst_fd, log, log_descriptor);
+        return process_fd_with_logging(src_fd, dst_fd, log, log_descriptor, maybe_signal_rx);
     }
-    process_fd_without_logging(src_fd, dst_fd, log_descriptor)
+    process_fd_without_logging(src_fd, dst_fd, log_descriptor, maybe_signal_rx)
 }
 
 fn process_fd_with_logging(
-    mut src_fd: impl Read + Send + 'static,
+    mut src_fd: impl Read + AsRawFd + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
     mut log: File,
     log_descriptor: &'static str,
+    maybe_signal_rx: Option<OwnedFd>,
 ) -> Result<()> {
     let mut buffer = [0; 1024];
     let mut logging_enabled = true;
 
-    loop {
-        let bytes_read = src_fd.read(&mut buffer).context(format!(
-            "Error reading from {} source stream",
+    let mut poll = mio::Poll::new().context("Error creating poll of events")?;
+    let mut events = mio::Events::with_capacity(4);
+
+    let src_token = 0;
+    let src_raw_fd = src_fd.as_raw_fd();
+    let mut mio_src_fd = mio::unix::SourceFd(&src_raw_fd);
+    poll.registry()
+        .register(
+            &mut mio_src_fd,
+            mio::Token(src_token),
+            mio::Interest::READABLE,
+        )
+        .context(format!(
+            "Error registering {} source stream in poll of events",
             log_descriptor
         ))?;
-        if bytes_read == 0 {
-            return Ok(());
-        }
 
-        match dst_fd.write_all(&buffer[..bytes_read]) {
-            Ok(_) => (),
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Error writing to {} destination stream: {}",
-                    log_descriptor,
-                    e
-                ));
-            }
-        }
+    let signal_token = 1;
+    if let Some(signal_rx) = &maybe_signal_rx {
+        let signal_raw_fd = signal_rx.as_raw_fd();
+        let mut mio_signal_fd = mio::unix::SourceFd(&signal_raw_fd);
+        poll.registry()
+            .register(
+                &mut mio_signal_fd,
+                mio::Token(signal_token),
+                mio::Interest::READABLE,
+            )
+            .context("Error registering signal pipe in poll of events")?;
+    }
 
-        if logging_enabled {
-            if let Err(e) = log.write_all(&buffer[..bytes_read]) {
-                eprintln!(
-                    "Error writing to {} log, disabling logging: {}",
-                    log_descriptor, e
-                );
-                logging_enabled = false;
+    loop {
+        poll.poll(&mut events, None)
+            .context("Error polling for events")?;
+
+        for event in events.iter() {
+            match event.token() {
+                mio::Token(token) if token == src_token => {
+                    let bytes_read = src_fd.read(&mut buffer).context(format!(
+                        "Error reading from {} source stream",
+                        log_descriptor
+                    ))?;
+                    if bytes_read == 0 {
+                        return Ok(());
+                    }
+
+                    match dst_fd.write_all(&buffer[..bytes_read]) {
+                        Ok(_) => (),
+                        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Error writing to {} destination stream: {}",
+                                log_descriptor,
+                                e
+                            ));
+                        }
+                    }
+
+                    if logging_enabled {
+                        if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+                            eprintln!(
+                                "Error writing to {} log, disabling logging: {}",
+                                log_descriptor, e
+                            );
+                            logging_enabled = false;
+                        }
+                    }
+                }
+                mio::Token(token) if token == signal_token => {
+                    return Ok(());
+                }
+                _ => unreachable!(),
             }
         }
     }
 }
 
 fn process_fd_without_logging(
-    mut src_fd: impl Read + Send + 'static,
+    mut src_fd: impl Read + AsRawFd + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
     log_descriptor: &'static str,
+    maybe_signal_rx: Option<OwnedFd>,
 ) -> Result<()> {
     let mut buffer = [0; 1024];
-    loop {
-        let bytes_read = src_fd.read(&mut buffer).context(format!(
-            "Error reading from {} source stream",
+
+    let mut poll = mio::Poll::new().context("Error creating poll of events")?;
+    let mut events = mio::Events::with_capacity(4);
+
+    let src_token = 0;
+    let src_raw_fd = src_fd.as_raw_fd();
+    let mut mio_src_fd = mio::unix::SourceFd(&src_raw_fd);
+    poll.registry()
+        .register(
+            &mut mio_src_fd,
+            mio::Token(src_token),
+            mio::Interest::READABLE,
+        )
+        .context(format!(
+            "Error registering {} source stream in poll of events",
             log_descriptor
         ))?;
-        if bytes_read == 0 {
-            return Ok(());
-        }
 
-        match dst_fd.write_all(&buffer[..bytes_read]) {
-            Ok(_) => (),
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Error writing to {} destination stream: {}",
-                    log_descriptor,
-                    e
-                ));
+    let signal_token = 1;
+    if let Some(ref signal_rx) = maybe_signal_rx {
+        let signal_raw_fd = signal_rx.as_raw_fd();
+        let mut mio_signal_fd = mio::unix::SourceFd(&signal_raw_fd);
+        poll.registry()
+            .register(
+                &mut mio_signal_fd,
+                mio::Token(signal_token),
+                mio::Interest::READABLE,
+            )
+            .context("Error registering signal pipe in poll of events")?;
+    }
+
+    loop {
+        poll.poll(&mut events, None)
+            .context("Error polling for events")?;
+
+        for event in events.iter() {
+            match event.token() {
+                mio::Token(token) if token == src_token => {
+                    let bytes_read = src_fd.read(&mut buffer).context(format!(
+                        "Error reading from {} source stream",
+                        log_descriptor
+                    ))?;
+                    if bytes_read == 0 {
+                        return Ok(());
+                    }
+
+                    match dst_fd.write_all(&buffer[..bytes_read]) {
+                        Ok(_) => (),
+                        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Error writing to {} destination stream: {}",
+                                log_descriptor,
+                                e
+                            ));
+                        }
+                    }
+                }
+                mio::Token(token) if token == signal_token => {
+                    return Ok(());
+                }
+                _ => unreachable!(),
             }
         }
     }
@@ -562,6 +664,7 @@ fn process_fd_without_logging(
 fn process_signals(
     mut signals: SignalsInfo,
     mutex_child_guard: Arc<Mutex<ChildGuard>>,
+    signal_tx: OwnedFd,
 ) -> Result<()> {
     // unwrap: Safe because `signals.forever()` is never empty.
     if let signum @ (SIGHUP | SIGINT | SIGTERM) = signals.forever().next().unwrap() {
@@ -574,5 +677,8 @@ fn process_signals(
             Signal::try_from(signum).unwrap(),
         )?;
     }
+    // unwrap: Safe because either the receiving end is still waiting to get a message, or it has
+    // been already closed because the thread that owned it already died, and then we don't care.
+    nix::unistd::write(signal_tx, &[1]).unwrap();
     Ok(())
 }
