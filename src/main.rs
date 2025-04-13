@@ -121,6 +121,7 @@ fn main() -> Result<()> {
         "stderr.log",
     )?;
 
+    // Don't even start the child process if we were already told to terminate.
     if let Some(signal) = signals.pending().next() {
         std::process::exit(128 + signal);
     }
