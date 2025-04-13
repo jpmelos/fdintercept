@@ -474,16 +474,6 @@ fn process_fd_with_logging(
             return Ok(());
         }
 
-        if logging_enabled {
-            if let Err(e) = log.write_all(&buffer[..bytes_read]) {
-                eprintln!(
-                    "Error writing to {} log, disabling logging: {}",
-                    log_descriptor, e
-                );
-                logging_enabled = false;
-            }
-        }
-
         match dst_fd.write_all(&buffer[..bytes_read]) {
             Ok(_) => (),
             Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
@@ -495,6 +485,16 @@ fn process_fd_with_logging(
                     log_descriptor,
                     e
                 ));
+            }
+        }
+
+        if logging_enabled {
+            if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+                eprintln!(
+                    "Error writing to {} log, disabling logging: {}",
+                    log_descriptor, e
+                );
+                logging_enabled = false;
             }
         }
     }
