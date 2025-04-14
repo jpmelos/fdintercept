@@ -2,22 +2,30 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      - id: check-executables-have-shebangs
-      - id: check-shebang-scripts-are-executable
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
+      - name: All executables should be shebang scripts
+        id: check-executables-have-shebangs
+      - name: All shebang scripts should be executable
+        id: check-shebang-scripts-are-executable
+      - name: All non-empty files should end with a newline
+        id: end-of-file-fixer
+      - name: No files should have trailing whitespaces
+        id: trailing-whitespace
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
-      - id: fmt
-      - id: cargo-check
-      - id: clippy
+      - name: Format Rust files
+        id: fmt
+      - name: Run cargo check
+        id: cargo-check
+      - name: Run cargo clippy
+        id: clippy
 
   - repo: https://github.com/hukkin/mdformat
     rev: 0.7.22
     hooks:
-      - id: mdformat
+      - name: Format markdown files
+        id: mdformat
         additional_dependencies:
           - mdformat-rustfmt
           - mdformat-shfmt
@@ -30,10 +38,12 @@ repos:
   - repo: https://github.com/rbubley/mirrors-prettier
     rev: v3.5.3
     hooks:
-      - id: prettier
+      - name: Format YAML files
+        id: prettier
         files: \.(yaml|yml)$
 
   - repo: https://github.com/ComPWA/taplo-pre-commit
     rev: v0.9.3
     hooks:
-      - id: taplo-format
+      - name: Format TOML files
+        id: taplo-format
