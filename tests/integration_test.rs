@@ -36,6 +36,7 @@ fn run_main_process(temp_dir: &TempDir, test_script: &PathBuf) -> Child {
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap()
 }
