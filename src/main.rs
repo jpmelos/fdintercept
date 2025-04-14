@@ -513,49 +513,34 @@ fn process_fd(
     loop {
         poll.poll(&mut pending_events, Some(Duration::from_millis(100)))
             .context("Error polling for events")?;
-        let events: Vec<_> = pending_events.iter().collect();
+        let events = pending_events.iter().collect();
 
-        if events.is_empty() {
-            match inner_process_fd(&mut src_fd, &mut dst_fd, &mut maybe_log) {
-                Ok(ProcessFdSuccess::DataLogged) => continue,
-                Ok(ProcessFdSuccess::Eof) => return Ok(()),
-                Err(ProcessFdError::Log(e)) => {
-                    eprintln!(
-                        "Error writing to {} log, disabling logging: {}",
-                        log_descriptor, e
-                    );
-                    maybe_log.take();
-                }
-                Err(e) => {
-                    return Err(e).context(format!("Error processing stream {}", log_descriptor));
-                }
+        let mut event_outcomes =
+            process_events_for_fd(events, &mut src_fd, &mut dst_fd, &mut maybe_log);
+
+        match event_outcomes.swap_remove(0) {
+            Ok(ProcessEventsForFdSuccess::DataLogged) => (),
+            Ok(ProcessEventsForFdSuccess::Eof) => return Ok(()),
+            Ok(ProcessEventsForFdSuccess::Signal) => return Ok(()),
+            Err(ProcessEventsForFdError::Log(e)) => {
+                eprintln!(
+                    "Error writing to {} log, disabling logging: {}",
+                    log_descriptor, e
+                );
+                maybe_log.take();
+            }
+            Err(e) => {
+                return Err(e).context(format!(
+                    "Error processing event for stream {}",
+                    log_descriptor
+                ));
             }
         }
 
-        for event in events.iter() {
-            match event.token() {
-                mio::Token(token) if token == SRC_TOKEN => {
-                    match inner_process_fd(&mut src_fd, &mut dst_fd, &mut maybe_log) {
-                        Ok(ProcessFdSuccess::DataLogged) => continue,
-                        Ok(ProcessFdSuccess::Eof) => return Ok(()),
-                        Err(ProcessFdError::Log(e)) => {
-                            eprintln!(
-                                "Error writing to {} log, disabling logging: {}",
-                                log_descriptor, e
-                            );
-                            maybe_log.take();
-                        }
-                        Err(e) => {
-                            return Err(e)
-                                .context(format!("Error processing stream {}", log_descriptor));
-                        }
-                    }
-                }
-                mio::Token(token) if token == SIGNAL_TOKEN => {
-                    return Ok(());
-                }
-                _ => unreachable!(),
-            }
+        if event_outcomes.len() == 1 {
+            // There was a signal event, and we already processed the fd readable event
+            // that happened simultaneously. We can just return.
+            return Ok(());
         }
     }
 }
@@ -599,19 +584,20 @@ fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> R
     Ok(())
 }
 
-enum ProcessFdSuccess {
+enum ProcessEventsForFdSuccess {
     DataLogged,
     Eof,
+    Signal,
 }
 
 #[derive(Debug)]
-enum ProcessFdError {
+enum ProcessEventsForFdError {
     Read(std::io::Error),
     Write(std::io::Error),
     Log(std::io::Error),
 }
 
-impl std::fmt::Display for ProcessFdError {
+impl std::fmt::Display for ProcessEventsForFdError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Read(e) => write!(f, "Failed to read data: {:?}", e),
@@ -621,45 +607,74 @@ impl std::fmt::Display for ProcessFdError {
     }
 }
 
-impl std::error::Error for ProcessFdError {}
+impl std::error::Error for ProcessEventsForFdError {}
 
-fn inner_process_fd(
+fn process_events_for_fd(
+    events: Vec<&mio::event::Event>,
+    mut src_fd: &mut impl Read,
+    mut dst_fd: &mut impl Write,
+    maybe_log: &mut Option<File>,
+) -> Vec<Result<ProcessEventsForFdSuccess, ProcessEventsForFdError>> {
+    if events.is_empty() {
+        // We process this as an event readable.
+        return vec![inner_fd_event_readable(&mut src_fd, &mut dst_fd, maybe_log)];
+    }
+
+    if events.len() == 1 {
+        match events[0].token() {
+            mio::Token(token) if token == SRC_TOKEN => {
+                return vec![inner_fd_event_readable(&mut src_fd, &mut dst_fd, maybe_log)];
+            }
+            mio::Token(token) if token == SIGNAL_TOKEN => {
+                return vec![Ok(ProcessEventsForFdSuccess::Signal)];
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    vec![
+        inner_fd_event_readable(&mut src_fd, &mut dst_fd, maybe_log),
+        Ok(ProcessEventsForFdSuccess::Signal),
+    ]
+}
+
+fn inner_fd_event_readable(
     src_fd: &mut impl Read,
     dst_fd: &mut impl Write,
     maybe_log: &mut Option<File>,
-) -> Result<ProcessFdSuccess, ProcessFdError> {
+) -> Result<ProcessEventsForFdSuccess, ProcessEventsForFdError> {
     let mut buffer = [0; 1024];
 
     let bytes_read = match src_fd.read(&mut buffer) {
         Ok(0) => {
-            return Ok(ProcessFdSuccess::Eof);
+            return Ok(ProcessEventsForFdSuccess::Eof);
         }
         Ok(bytes_read) => bytes_read,
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-            return Ok(ProcessFdSuccess::DataLogged);
+            return Ok(ProcessEventsForFdSuccess::DataLogged);
         }
         Err(e) => {
-            return Err(ProcessFdError::Read(e));
+            return Err(ProcessEventsForFdError::Read(e));
         }
     };
 
     match dst_fd.write_all(&buffer[..bytes_read]) {
         Ok(_) => (),
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-            return Ok(ProcessFdSuccess::Eof);
+            return Ok(ProcessEventsForFdSuccess::Eof);
         }
         Err(e) => {
-            return Err(ProcessFdError::Write(e));
+            return Err(ProcessEventsForFdError::Write(e));
         }
     }
 
     if let Some(log) = maybe_log {
         if let Err(e) = log.write_all(&buffer[..bytes_read]) {
-            return Err(ProcessFdError::Log(e));
+            return Err(ProcessEventsForFdError::Log(e));
         }
     }
 
-    Ok(ProcessFdSuccess::DataLogged)
+    Ok(ProcessEventsForFdSuccess::DataLogged)
 }
 
 fn process_signals(
