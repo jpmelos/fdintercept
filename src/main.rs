@@ -500,8 +500,8 @@ const SRC_TOKEN: usize = 0;
 const SIGNAL_TOKEN: usize = 1;
 
 fn process_fd(
-    mut src_fd: impl Read + AsRawFd + Send + 'static,
-    mut dst_fd: impl Write + Send + 'static,
+    mut src_fd: impl Read + AsRawFd,
+    mut dst_fd: impl Write,
     mut maybe_log: Option<File>,
     log_descriptor: &'static str,
     maybe_signal_rx: Option<OwnedFd>,
@@ -624,8 +624,8 @@ impl std::fmt::Display for ProcessFdError {
 impl std::error::Error for ProcessFdError {}
 
 fn inner_process_fd(
-    src_fd: &mut (impl Read + Send + 'static),
-    dst_fd: &mut (impl Write + Send + 'static),
+    src_fd: &mut impl Read,
+    dst_fd: &mut impl Write,
     maybe_log: &mut Option<File>,
 ) -> Result<ProcessFdSuccess, ProcessFdError> {
     let mut buffer = [0; 1024];
