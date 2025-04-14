@@ -7,8 +7,9 @@ target command.
 
 - Wraps any command and captures all I/O via stdin, stdout, and stderr.
 - Logs each stream to separate files.
-- Supports target command configuration via the CLI, an environment variable,
-  or a configuration file.
+- Supports configuration via the CLI, an environment variable, or a
+  configuration file, including the target command.
+- Configurable buffer size for I/O operations.
 - Preserves original program exit codes.
 - Handles process and child process termination gracefully.
 
@@ -51,7 +52,8 @@ Then simply run:
 fdintercept
 ```
 
-The order of precedence in how the target is defined is:
+If defined in more than one way, the order of precedence in how the target
+command is resolved is:
 
 1. Command line arguments
 2. Environment variable
@@ -65,13 +67,20 @@ The program creates three log files in the current directory:
 - `stdout.log`: Contains all standard output from the program.
 - `stderr.log`: Contains all error output from the program.
 
-## CLI arguments
+## Configuration
+
+fdintercept accepts configuration via CLI arguments, environment variables, and
+a configuration file. Precedence follows that order.
+
+### CLI arguments
+
+These have the highest priority. If any setting is defined as a CLI argument,
+it won't be overridden by environment variables or a configuration file.
 
 fdintercept accepts the following CLI arguments:
 
-- `--conf`: Path to a configuration file. This has the highest precedence over
-  all other configuration sources. If relative, this is relative to the current
-  working directory.
+- `--conf`: Path to a configuration file. If relative, this is relative to the
+  current working directory.
 - `--stdin-log`: Filename of the log file that will record stdin traffic. If
   relative, this is relative to the current working directory. Default:
   `stdin.log`.
@@ -81,32 +90,42 @@ fdintercept accepts the following CLI arguments:
 - `--stderr-log`: Filename of the log file that will record stderr traffic. If
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
-- After `--`: the target command to be wrapped by fdintercept.
+- `--buffer-size`: Size in bytes of the buffer used for I/O operations.
+- After `--`: The target command that will be executed.
 
 If at least one of `--stdin-log`, `--stdout-log`, and `--stderr-log` is
 specified, only the specified log files will be created. If none are specified,
 they will all be created with their default values. (These can be mixed with
-the configuration file fields and if any log filenames are specified there, the
-defaults won't be created either.)
+the configuration file fields and if any log filenames are specified here or
+there, the defaults won't be created either.)
 
-### Example
+#### Examples
 
 ```bash
-# Log all stdout I/O for a Python script.
-fdintercept --stdout-log /tmp/stdout.log -- python script.py arg1 arg2
+# Log all stdout I/O for a Python script with a custom buffer size.
+fdintercept --stdout-log /tmp/stdout.log --buffer-size 1024 -- python script.py arg1 arg2
 
 # Log all stdin, stdout, and stderr I/O for a Python script.
 fdintercept -- python script.py arg1 arg2
 
-# Use a specific configuration file
+# Use a specific configuration file.
 fdintercept --conf /path/to/config.toml
 ```
 
-## Configuration
+### Environment variables
 
-It is possible to set target and log files via a configuration file.
+These environment variables will be used, if defined:
 
-fdintercept will look for configuration in these locations, in this order:
+- `FDINTERCEPTRC`: Path to a configuration file. If relative, this is relative
+  to the current working directory.
+- `FDINTERCEPT_BUFFER_SIZE`: Size in bytes of the buffer used for I/O
+  operations. Default: 8KiB.
+- `FDINTERCEPT_TARGET`: The target command that will be executed.
+
+### Configuration file
+
+fdintercept will look for the configuration file in these locations, in this
+order:
 
 1. Path specified via `--conf` CLI argument
 2. Path specified in `$FDINTERCEPTRC` environment variable
@@ -115,7 +134,6 @@ fdintercept will look for configuration in these locations, in this order:
 
 Here are the accepted fields:
 
-- `target`: The target command that needs to be executed.
 - `stdin_log`: Filename of the log file that will record stdin traffic. If
   relative, this is relative to the current working directory. Default:
   `stdin.log`.
@@ -125,23 +143,30 @@ Here are the accepted fields:
 - `stderr_log`: Filename of the log file that will record stderr traffic. If
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
+- `buffer-size`: Size in bytes of the buffer used for I/O operations. Default:
+  8KiB.
+- `target`: The target command that will be executed.
 
 If at least one of `stdin_log`, `stdout_log`, and `stderr_log` is specified,
 only the specified log files will be created. If none are specified, they will
 all be created with their default values. (These can be mixed with the CLI
-arguments for log filenames and if any log filenames are specified there, the
-defaults won't be created either.)
+arguments and if any log filenames are specified here or there, the defaults
+won't be created either.)
 
-### Example
+#### Example
 
-This will make fdintercept log all stdout I/O for a Python script:
+This will make fdintercept log all stdout I/O for a Python script with a custom
+buffer size:
 
 ```toml
 target = "python script.py arg1 arg2"
 stdout_log = "/tmp/stdout.log"
+buffer_size = 1024
 ```
 
-## Building from Source
+## Building from source
+
+This assumes you have the Rust toolchain installed locally.
 
 ```bash
 git clone https://github.com/jpmelos/fdintercept
@@ -160,6 +185,7 @@ cargo build --release
 - [x] Look for configuration in a file passed in via the command line
 - [x] Look for configuration in a file passed in via an environment variable
   (`$FDINTERCEPTRC`)
+- [x] Configure buffer size for I/O operations
 - [ ] Allow definition of message schemas, add separators between messages
 - [ ] Add timestamps to messages
 - [ ] Allow intercepting arbitrary file descriptors
