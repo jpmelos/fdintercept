@@ -138,8 +138,7 @@ fn main() -> Result<()> {
         "stderr.log",
     )?;
 
-    // Don't even start the child process if we were already told to terminate. We can ignore
-    // `SIGCHLD` here since we don't have a child process yet.
+    // Don't even start the child process if we were already told to terminate.
     if let Some(signum) = signals.pending().next() {
         std::process::exit(128 + signum);
     }
