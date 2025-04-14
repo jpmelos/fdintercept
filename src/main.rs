@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use nix::fcntl::{self, OFlag};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::{Pid, pipe};
 use non_empty_string::NonEmptyString;
@@ -496,33 +497,23 @@ fn spawn_self_shipping_thread_in_scope<'scope, F>(
 }
 
 fn process_fd(
-    src_fd: impl Read + AsRawFd + Send + 'static,
-    dst_fd: impl Write + Send + 'static,
-    maybe_log: Option<File>,
-    log_descriptor: &'static str,
-    maybe_signal_rx: Option<OwnedFd>,
-) -> Result<()> {
-    if let Some(log) = maybe_log {
-        return process_fd_with_logging(src_fd, dst_fd, log, log_descriptor, maybe_signal_rx);
-    }
-    process_fd_without_logging(src_fd, dst_fd, log_descriptor, maybe_signal_rx)
-}
-
-fn process_fd_with_logging(
     mut src_fd: impl Read + AsRawFd + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
-    mut log: File,
+    mut maybe_log: Option<File>,
     log_descriptor: &'static str,
     maybe_signal_rx: Option<OwnedFd>,
 ) -> Result<()> {
-    let mut buffer = [0; 1024];
-    let mut logging_enabled = true;
-
     let mut poll = mio::Poll::new().context("Error creating poll of events")?;
-    let mut events = mio::Events::with_capacity(4);
+    let mut pending_events = mio::Events::with_capacity(2);
 
     let src_token = 0;
     let src_raw_fd = src_fd.as_raw_fd();
+    let flags = fcntl::fcntl(src_raw_fd, fcntl::F_GETFL).expect("Failed to get flags");
+    fcntl::fcntl(
+        src_raw_fd,
+        fcntl::F_SETFL(OFlag::from_bits_truncate(flags as i32) | OFlag::O_NONBLOCK),
+    )
+    .expect("Failed to set non-blocking mode");
     let mut mio_src_fd = mio::unix::SourceFd(&src_raw_fd);
     poll.registry()
         .register(
@@ -549,41 +540,43 @@ fn process_fd_with_logging(
     }
 
     loop {
-        poll.poll(&mut events, None)
+        poll.poll(&mut pending_events, Some(Duration::from_millis(100)))
             .context("Error polling for events")?;
+        let events: Vec<_> = pending_events.iter().collect();
+
+        if events.is_empty() {
+            match inner_process_fd(&mut src_fd, &mut dst_fd, &mut maybe_log) {
+                Ok(ProcessFdSuccess::DataLogged) => continue,
+                Ok(ProcessFdSuccess::Eof) => return Ok(()),
+                Err(ProcessFdError::Log(e)) => {
+                    eprintln!(
+                        "Error writing to {} log, disabling logging: {}",
+                        log_descriptor, e
+                    );
+                    maybe_log.take();
+                }
+                Err(e) => {
+                    return Err(e).context(format!("Error processing stream {}", log_descriptor));
+                }
+            }
+        }
 
         for event in events.iter() {
             match event.token() {
                 mio::Token(token) if token == src_token => {
-                    let bytes_read = src_fd.read(&mut buffer).context(format!(
-                        "Error reading from {} source stream",
-                        log_descriptor
-                    ))?;
-                    if bytes_read == 0 {
-                        return Ok(());
-                    }
-
-                    match dst_fd.write_all(&buffer[..bytes_read]) {
-                        Ok(_) => (),
-                        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!(
-                                "Error writing to {} destination stream: {}",
-                                log_descriptor,
-                                e
-                            ));
-                        }
-                    }
-
-                    if logging_enabled {
-                        if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+                    match inner_process_fd(&mut src_fd, &mut dst_fd, &mut maybe_log) {
+                        Ok(ProcessFdSuccess::DataLogged) => continue,
+                        Ok(ProcessFdSuccess::Eof) => return Ok(()),
+                        Err(ProcessFdError::Log(e)) => {
                             eprintln!(
                                 "Error writing to {} log, disabling logging: {}",
                                 log_descriptor, e
                             );
-                            logging_enabled = false;
+                            maybe_log.take();
+                        }
+                        Err(e) => {
+                            return Err(e)
+                                .context(format!("Error processing stream {}", log_descriptor));
                         }
                     }
                 }
@@ -596,80 +589,67 @@ fn process_fd_with_logging(
     }
 }
 
-fn process_fd_without_logging(
-    mut src_fd: impl Read + AsRawFd + Send + 'static,
-    mut dst_fd: impl Write + Send + 'static,
-    log_descriptor: &'static str,
-    maybe_signal_rx: Option<OwnedFd>,
-) -> Result<()> {
-    let mut buffer = [0; 1024];
+enum ProcessFdSuccess {
+    DataLogged,
+    Eof,
+}
 
-    let mut poll = mio::Poll::new().context("Error creating poll of events")?;
-    let mut events = mio::Events::with_capacity(4);
+#[derive(Debug)]
+enum ProcessFdError {
+    Read(std::io::Error),
+    Write(std::io::Error),
+    Log(std::io::Error),
+}
 
-    let src_token = 0;
-    let src_raw_fd = src_fd.as_raw_fd();
-    let mut mio_src_fd = mio::unix::SourceFd(&src_raw_fd);
-    poll.registry()
-        .register(
-            &mut mio_src_fd,
-            mio::Token(src_token),
-            mio::Interest::READABLE,
-        )
-        .context(format!(
-            "Error registering {} source stream in poll of events",
-            log_descriptor
-        ))?;
-
-    let signal_token = 1;
-    if let Some(ref signal_rx) = maybe_signal_rx {
-        let signal_raw_fd = signal_rx.as_raw_fd();
-        let mut mio_signal_fd = mio::unix::SourceFd(&signal_raw_fd);
-        poll.registry()
-            .register(
-                &mut mio_signal_fd,
-                mio::Token(signal_token),
-                mio::Interest::READABLE,
-            )
-            .context("Error registering signal pipe in poll of events")?;
-    }
-
-    loop {
-        poll.poll(&mut events, None)
-            .context("Error polling for events")?;
-
-        for event in events.iter() {
-            match event.token() {
-                mio::Token(token) if token == src_token => {
-                    let bytes_read = src_fd.read(&mut buffer).context(format!(
-                        "Error reading from {} source stream",
-                        log_descriptor
-                    ))?;
-                    if bytes_read == 0 {
-                        return Ok(());
-                    }
-
-                    match dst_fd.write_all(&buffer[..bytes_read]) {
-                        Ok(_) => (),
-                        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!(
-                                "Error writing to {} destination stream: {}",
-                                log_descriptor,
-                                e
-                            ));
-                        }
-                    }
-                }
-                mio::Token(token) if token == signal_token => {
-                    return Ok(());
-                }
-                _ => unreachable!(),
-            }
+impl std::fmt::Display for ProcessFdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(e) => write!(f, "Failed to read data: {:?}", e),
+            Self::Write(e) => write!(f, "Failed to write data: {:?}", e),
+            Self::Log(e) => write!(f, "Failed to log data: {:?}", e),
         }
     }
+}
+
+impl std::error::Error for ProcessFdError {}
+
+fn inner_process_fd(
+    src_fd: &mut (impl Read + Send + 'static),
+    dst_fd: &mut (impl Write + Send + 'static),
+    maybe_log: &mut Option<File>,
+) -> Result<ProcessFdSuccess, ProcessFdError> {
+    let mut buffer = [0; 1024];
+
+    let bytes_read = match src_fd.read(&mut buffer) {
+        Ok(0) => {
+            return Ok(ProcessFdSuccess::Eof);
+        }
+        Ok(bytes_read) => bytes_read,
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            return Ok(ProcessFdSuccess::DataLogged);
+        }
+        Err(e) => {
+            return Err(ProcessFdError::Read(e));
+        }
+    };
+
+    match dst_fd.write_all(&buffer[..bytes_read]) {
+        Ok(_) => (),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+            return Ok(ProcessFdSuccess::Eof);
+        }
+        Err(e) => {
+            return Err(ProcessFdError::Write(e));
+        }
+    }
+
+    if let Some(log) = maybe_log {
+        if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+            return Err(ProcessFdError::Log(e));
+        }
+    }
+
+    Ok(ProcessFdSuccess::DataLogged)
 }
 
 fn process_signals(
