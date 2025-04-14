@@ -496,6 +496,9 @@ fn spawn_self_shipping_thread_in_scope<'scope, F>(
     handle_tx.send(handle).unwrap();
 }
 
+const SRC_TOKEN: usize = 0;
+const SIGNAL_TOKEN: usize = 1;
+
 fn process_fd(
     mut src_fd: impl Read + AsRawFd + Send + 'static,
     mut dst_fd: impl Write + Send + 'static,
@@ -506,7 +509,6 @@ fn process_fd(
     let mut poll = mio::Poll::new().context("Error creating poll of events")?;
     let mut pending_events = mio::Events::with_capacity(2);
 
-    let src_token = 0;
     let src_raw_fd = src_fd.as_raw_fd();
     let flags = fcntl::fcntl(src_raw_fd, fcntl::F_GETFL).expect("Failed to get flags");
     fcntl::fcntl(
@@ -518,7 +520,7 @@ fn process_fd(
     poll.registry()
         .register(
             &mut mio_src_fd,
-            mio::Token(src_token),
+            mio::Token(SRC_TOKEN),
             mio::Interest::READABLE,
         )
         .context(format!(
@@ -526,14 +528,13 @@ fn process_fd(
             log_descriptor
         ))?;
 
-    let signal_token = 1;
     if let Some(signal_rx) = &maybe_signal_rx {
         let signal_raw_fd = signal_rx.as_raw_fd();
         let mut mio_signal_fd = mio::unix::SourceFd(&signal_raw_fd);
         poll.registry()
             .register(
                 &mut mio_signal_fd,
-                mio::Token(signal_token),
+                mio::Token(SIGNAL_TOKEN),
                 mio::Interest::READABLE,
             )
             .context("Error registering signal pipe in poll of events")?;
@@ -563,7 +564,7 @@ fn process_fd(
 
         for event in events.iter() {
             match event.token() {
-                mio::Token(token) if token == src_token => {
+                mio::Token(token) if token == SRC_TOKEN => {
                     match inner_process_fd(&mut src_fd, &mut dst_fd, &mut maybe_log) {
                         Ok(ProcessFdSuccess::DataLogged) => continue,
                         Ok(ProcessFdSuccess::Eof) => return Ok(()),
@@ -580,7 +581,7 @@ fn process_fd(
                         }
                     }
                 }
-                mio::Token(token) if token == signal_token => {
+                mio::Token(token) if token == SIGNAL_TOKEN => {
                     return Ok(());
                 }
                 _ => unreachable!(),
