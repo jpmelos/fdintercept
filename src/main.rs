@@ -231,7 +231,7 @@ fn main() -> Result<()> {
             match handle.join() {
                 Ok(result) => match result {
                     Ok(_) => (),
-                    Err(e) => eprintln!("Error in thread {}: {:?}", thread_name, e),
+                    Err(e) => eprintln!("Error in thread {}: {}", thread_name, e),
                 },
                 Err(e) => eprintln!("Error joining thread: {:?}", e),
             }
@@ -351,7 +351,7 @@ fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
         }
         Err(std::env::VarError::NotPresent) => (),
         Err(e) => {
-            eprintln!("Error reading HOME environment variable: {:?}", e);
+            eprintln!("Error reading HOME environment variable: {}", e);
         }
     };
 
@@ -375,10 +375,7 @@ fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
         }
         Err(std::env::VarError::NotPresent) => (),
         Err(e) => {
-            eprintln!(
-                "Error reading XDG_CONFIG_HOME environment variable: {:?}",
-                e
-            );
+            eprintln!("Error reading XDG_CONFIG_HOME environment variable: {}", e);
         }
     };
 
@@ -648,9 +645,9 @@ enum ProcessEventsForFdError {
 impl std::fmt::Display for ProcessEventsForFdError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Read(e) => write!(f, "Failed to read data: {:?}", e),
-            Self::Write(e) => write!(f, "Failed to write data: {:?}", e),
-            Self::Log(e) => write!(f, "Failed to log data: {:?}", e),
+            Self::Read(e) => write!(f, "Failed to read data: {}", e),
+            Self::Write(e) => write!(f, "Failed to write data: {}", e),
+            Self::Log(e) => write!(f, "Failed to log data: {}", e),
         }
     }
 }
