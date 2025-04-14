@@ -678,6 +678,9 @@ fn process_events_for_fd(
         }
     }
 
+    // There is a readable event for the fd, and a signal. We always want to process the readable
+    // event first so we don't miss anything that should be logged, and then the signal, which will
+    // kill the thread.
     vec![
         inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log),
         Ok(ProcessEventsForFdSuccess::Signal),
