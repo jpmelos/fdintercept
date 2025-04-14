@@ -41,12 +41,17 @@ struct CliArgs {
     target: Vec<String>,
 }
 
+struct EnvVars {
+    conf: Option<PathBuf>,
+    target: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct Config {
-    target: Option<String>,
     stdin_log: Option<PathBuf>,
     stdout_log: Option<PathBuf>,
     stderr_log: Option<PathBuf>,
+    target: Option<String>,
 }
 
 struct Target {
@@ -98,20 +103,10 @@ fn main() -> Result<()> {
         .context("Failed to register signal handlers")?;
 
     let cli_args = CliArgs::parse();
-    let target_env_var = match env::var("FDINTERCEPT_TARGET") {
-        Ok(env_var) => Some(env_var),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(e) => {
-            eprintln!(
-                "Error reading FDINTERCEPT_TARGET environment variable: {:?}",
-                e
-            );
-            None
-        }
-    };
-    let config = get_config(&cli_args).context("Error reading configuration")?;
+    let env_vars = get_env_vars().context("Error reading environment variables")?;
+    let config = get_config(&cli_args, &env_vars).context("Error reading configuration")?;
 
-    let target = get_target(&cli_args, &target_env_var, &config).context("Error getting target")?;
+    let target = get_target(&cli_args, &env_vars, &config).context("Error getting target")?;
 
     let use_defaults = cli_args.stdin_log.is_none()
         && cli_args.stdout_log.is_none()
@@ -229,9 +224,43 @@ fn main() -> Result<()> {
     );
 }
 
-fn get_config(cli_args: &CliArgs) -> Result<Config> {
-    if let Some(path) = cli_args.conf.clone() {
-        return std::fs::read_to_string(&path)
+fn get_env_vars() -> Result<EnvVars> {
+    Ok(EnvVars {
+        conf: {
+            match env::var("FDINTERCEPTRC") {
+                Ok(env_var) => {
+                    if env_var.is_empty() {
+                        return Err(anyhow::anyhow!("FDINTERCEPTRC is empty"));
+                    }
+                    Some(PathBuf::from(env_var))
+                }
+                Err(std::env::VarError::NotPresent) => None,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Error reading FDINTERCEPTRC environment variable: {}",
+                        e
+                    ));
+                }
+            }
+        },
+        target: {
+            match env::var("FDINTERCEPT_TARGET") {
+                Ok(env_var) => Some(env_var),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Error reading FDINTERCEPT_TARGET environment variable: {}",
+                        e
+                    ));
+                }
+            }
+        },
+    })
+}
+
+fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
+    if let Some(ref path) = cli_args.conf {
+        return std::fs::read_to_string(path)
             .context(format!(
                 "Error reading configuration file {}",
                 path.display()
@@ -239,26 +268,14 @@ fn get_config(cli_args: &CliArgs) -> Result<Config> {
             .and_then(|contents| parse_config_contents(&contents));
     }
 
-    match env::var("FDINTERCEPTRC") {
-        Ok(path) => {
-            let path = PathBuf::from(path);
-            match std::fs::read_to_string(&path) {
-                Ok(contents) => {
-                    return parse_config_contents(&contents);
-                }
-                Err(e) => {
-                    return Err(e).context(format!(
-                        "Error reading configuration file {}",
-                        path.display()
-                    ));
-                }
-            }
-        }
-        Err(std::env::VarError::NotPresent) => (),
-        Err(e) => {
-            eprintln!("Error reading FDINTERCEPTRC environment variable: {:?}", e);
-        }
-    };
+    if let Some(ref path) = env_vars.conf {
+        return std::fs::read_to_string(path)
+            .context(format!(
+                "Error reading configuration file {}",
+                path.display()
+            ))
+            .and_then(|contents| parse_config_contents(&contents));
+    }
 
     match env::var("HOME") {
         Ok(home) => {
@@ -316,26 +333,28 @@ fn parse_config_contents(contents: &str) -> Result<Config> {
     toml::from_str(contents).context("Error parsing TOML configuration")
 }
 
-fn get_target(
-    cli_args: &CliArgs,
-    maybe_env_var: &Option<String>,
-    config: &Config,
-) -> Result<Target> {
-    match get_target_from_cli_args(cli_args) {
+fn get_target(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> Result<Target> {
+    match get_target_from_cli_arg(&cli_args.target) {
         Ok(target) => return Ok(target),
         Err(CliArgsTargetParseError::NotDefined) => (),
         Err(e) => return Err(e).context("Error getting target from CLI arguments"),
     };
 
-    if let Some(env_var) = maybe_env_var {
-        return get_target_from_env_var(env_var)
-            .context("Error getting target environment variable");
+    if let Some(ref target) = env_vars.target {
+        match get_target_from_string(target) {
+            Ok(target) => return Ok(target),
+            Err(e) => {
+                return Err(e)
+                    .context("Error getting target from FDINTERCEPT_TARGET environment variable");
+            }
+        }
     }
 
-    match get_target_from_config(config) {
-        Ok(target) => return Ok(target),
-        Err(ConfigTargetParseError::NotDefined) => (),
-        Err(e) => return Err(e).context("Error getting target from configuration file"),
+    if let Some(ref target) = config.target {
+        match get_target_from_string(target) {
+            Ok(target) => return Ok(target),
+            Err(e) => return Err(e).context("Error getting target from configuration file"),
+        }
     }
 
     Err(anyhow::anyhow!(
@@ -361,12 +380,8 @@ impl std::fmt::Display for CliArgsTargetParseError {
 
 impl std::error::Error for CliArgsTargetParseError {}
 
-fn get_target_from_cli_args(cli_args: &CliArgs) -> Result<Target, CliArgsTargetParseError> {
-    if cli_args.target.is_empty() {
-        return Err(CliArgsTargetParseError::NotDefined);
-    }
-    // unwrap: Cannot fail because we have already checked that the vector is not empty.
-    let target_vec = NonEmpty::from_vec(cli_args.target.clone()).unwrap();
+fn get_target_from_cli_arg(cli_arg: &[String]) -> Result<Target, CliArgsTargetParseError> {
+    let target_vec = NonEmpty::from_slice(cli_arg).ok_or(CliArgsTargetParseError::NotDefined)?;
     Ok(Target {
         executable: NonEmptyString::new(target_vec.head)
             .map_err(|_| CliArgsTargetParseError::EmptyExecutable)?,
@@ -375,50 +390,15 @@ fn get_target_from_cli_args(cli_args: &CliArgs) -> Result<Target, CliArgsTargetP
 }
 
 #[derive(Debug)]
-enum EnvVarTargetParseError {
+enum StringTargetParseError {
     Empty,
     FailedToTokenize,
     EmptyExecutable,
 }
 
-impl std::fmt::Display for EnvVarTargetParseError {
+impl std::fmt::Display for StringTargetParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Empty => write!(f, "FDINTERCEPT_TARGET cannot be empty"),
-            Self::FailedToTokenize => write!(f, "Failed to tokenize FDINTERCEPT_TARGET"),
-            Self::EmptyExecutable => write!(f, "FDINTERCEPT_TARGET executable cannot be empty"),
-        }
-    }
-}
-
-impl std::error::Error for EnvVarTargetParseError {}
-
-fn get_target_from_env_var(env_var: &str) -> Result<Target, EnvVarTargetParseError> {
-    if env_var.is_empty() {
-        return Err(EnvVarTargetParseError::Empty);
-    }
-    let tokenized_target = shlex::split(env_var).ok_or(EnvVarTargetParseError::FailedToTokenize)?;
-    // unwrap: Safe because we already ensure that target is not empty.
-    let target_vec = NonEmpty::from_vec(tokenized_target).unwrap();
-    Ok(Target {
-        executable: NonEmptyString::new(target_vec.head)
-            .map_err(|_| EnvVarTargetParseError::EmptyExecutable)?,
-        args: target_vec.tail,
-    })
-}
-
-#[derive(Debug)]
-enum ConfigTargetParseError {
-    Empty,
-    NotDefined,
-    FailedToTokenize,
-    EmptyExecutable,
-}
-
-impl std::fmt::Display for ConfigTargetParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotDefined => write!(f, "Target is not defined"),
             Self::FailedToTokenize => write!(f, "Failed to tokenize target"),
             Self::Empty => write!(f, "Target cannot be empty"),
             Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
@@ -426,22 +406,18 @@ impl std::fmt::Display for ConfigTargetParseError {
     }
 }
 
-impl std::error::Error for ConfigTargetParseError {}
+impl std::error::Error for StringTargetParseError {}
 
-fn get_target_from_config(config: &Config) -> Result<Target, ConfigTargetParseError> {
-    let target = config
-        .target
-        .as_ref()
-        .ok_or(ConfigTargetParseError::NotDefined)?;
+fn get_target_from_string(target: &str) -> Result<Target, StringTargetParseError> {
     if target.is_empty() {
-        return Err(ConfigTargetParseError::Empty);
+        return Err(StringTargetParseError::Empty);
     }
-    let tokenized_target = shlex::split(target).ok_or(ConfigTargetParseError::FailedToTokenize)?;
+    let tokenized_target = shlex::split(target).ok_or(StringTargetParseError::FailedToTokenize)?;
     // unwrap: Safe because we already ensure that target is not empty.
     let target_vec = NonEmpty::from_vec(tokenized_target).unwrap();
     Ok(Target {
         executable: NonEmptyString::new(target_vec.head)
-            .map_err(|_| ConfigTargetParseError::EmptyExecutable)?,
+            .map_err(|_| StringTargetParseError::EmptyExecutable)?,
         args: target_vec.tail,
     })
 }
