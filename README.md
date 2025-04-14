@@ -91,6 +91,7 @@ fdintercept accepts the following CLI arguments:
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
 - `--buffer-size`: Size in bytes of the buffer used for I/O operations.
+  Default: 8 KiB.
 - After `--`: The target command that will be executed.
 
 If at least one of `--stdin-log`, `--stdout-log`, and `--stderr-log` is
@@ -119,7 +120,7 @@ These environment variables will be used, if defined:
 - `FDINTERCEPTRC`: Path to a configuration file. If relative, this is relative
   to the current working directory.
 - `FDINTERCEPT_BUFFER_SIZE`: Size in bytes of the buffer used for I/O
-  operations. Default: 8KiB.
+  operations. Default: 8 KiB.
 - `FDINTERCEPT_TARGET`: The target command that will be executed.
 
 ### Configuration file
@@ -144,7 +145,7 @@ Here are the accepted fields:
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
 - `buffer-size`: Size in bytes of the buffer used for I/O operations. Default:
-  8KiB.
+  8 KiB.
 - `target`: The target command that will be executed.
 
 If at least one of `stdin_log`, `stdout_log`, and `stderr_log` is specified,

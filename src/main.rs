@@ -25,21 +25,31 @@ use wait_timeout::ChildExt;
 #[derive(Parser)]
 #[command(about, version)]
 struct CliArgs {
+    /// Path to a configuration file. If relative, this is relative to the current working
+    /// directory.
     #[arg(long)]
     conf: Option<PathBuf>,
 
+    /// Filename of the log file that will record stdin traffic. If relative, this is relative to
+    /// the current working directory. Default: `stdin.log`.
     #[arg(long)]
     stdin_log: Option<PathBuf>,
 
+    /// Filename of the log file that will record stdout traffic. If relative, this is relative to
+    /// the current working directory. Default: `stdout.log`.
     #[arg(long)]
     stdout_log: Option<PathBuf>,
 
+    /// Filename of the log file that will record stderr traffic. If relative, this is relative to
+    /// the current working directory. Default: `stderr.log`.
     #[arg(long)]
     stderr_log: Option<PathBuf>,
 
+    /// Size in bytes of the buffer used for I/O operations. Default: 8 KiB.
     #[arg(long)]
     buffer_size: Option<usize>,
 
+    /// The target command that will be executed.
     #[arg(last = true)]
     target: Vec<String>,
 }
