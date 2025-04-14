@@ -509,34 +509,13 @@ fn process_fd(
     let mut poll = mio::Poll::new().context("Error creating poll of events")?;
     let mut pending_events = mio::Events::with_capacity(2);
 
-    let src_raw_fd = src_fd.as_raw_fd();
-    let flags = fcntl::fcntl(src_raw_fd, fcntl::F_GETFL).expect("Failed to get flags");
-    fcntl::fcntl(
-        src_raw_fd,
-        fcntl::F_SETFL(OFlag::from_bits_truncate(flags as i32) | OFlag::O_NONBLOCK),
-    )
-    .expect("Failed to set non-blocking mode");
-    let mut mio_src_fd = mio::unix::SourceFd(&src_raw_fd);
-    poll.registry()
-        .register(
-            &mut mio_src_fd,
-            mio::Token(SRC_TOKEN),
-            mio::Interest::READABLE,
-        )
-        .context(format!(
-            "Error registering {} source stream in poll of events",
-            log_descriptor
-        ))?;
+    register_fd_into_poll(&poll, &src_fd, SRC_TOKEN).context(format!(
+        "Error registering {} source stream in poll of events",
+        log_descriptor
+    ))?;
 
     if let Some(signal_rx) = &maybe_signal_rx {
-        let signal_raw_fd = signal_rx.as_raw_fd();
-        let mut mio_signal_fd = mio::unix::SourceFd(&signal_raw_fd);
-        poll.registry()
-            .register(
-                &mut mio_signal_fd,
-                mio::Token(SIGNAL_TOKEN),
-                mio::Interest::READABLE,
-            )
+        register_fd_into_poll(&poll, signal_rx, SIGNAL_TOKEN)
             .context("Error registering signal pipe in poll of events")?;
     }
 
@@ -588,6 +567,25 @@ fn process_fd(
             }
         }
     }
+}
+
+fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> Result<()> {
+    let raw_fd = fd.as_raw_fd();
+
+    let flags = fcntl::fcntl(raw_fd, fcntl::F_GETFL).context("Error getting flags")?;
+    fcntl::fcntl(
+        raw_fd,
+        fcntl::F_SETFL(OFlag::from_bits_truncate(flags as i32) | OFlag::O_NONBLOCK),
+    )
+    .context("Error setting source fd as non-blocking")?;
+
+    poll.registry().register(
+        &mut mio::unix::SourceFd(&raw_fd),
+        mio::Token(token),
+        mio::Interest::READABLE,
+    )?;
+
+    Ok(())
 }
 
 enum ProcessFdSuccess {
