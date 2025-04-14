@@ -426,7 +426,7 @@ enum CliArgsTargetParseError {
 }
 
 impl std::fmt::Display for CliArgsTargetParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::NotDefined => write!(f, "Target is not defined"),
             Self::EmptyExecutable => write!(f, "Target executable cannot be empty"),
@@ -453,7 +453,7 @@ enum StringTargetParseError {
 }
 
 impl std::fmt::Display for StringTargetParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::FailedToTokenize => write!(f, "Failed to tokenize target"),
             Self::Empty => write!(f, "Target cannot be empty"),
@@ -646,7 +646,7 @@ enum ProcessEventsForFdError {
 }
 
 impl std::fmt::Display for ProcessEventsForFdError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Read(e) => write!(f, "Failed to read data: {:?}", e),
             Self::Write(e) => write!(f, "Failed to write data: {:?}", e),
