@@ -37,12 +37,16 @@ struct CliArgs {
     #[arg(long)]
     stderr_log: Option<PathBuf>,
 
+    #[arg(long)]
+    buffer_size: Option<usize>,
+
     #[arg(last = true)]
     target: Vec<String>,
 }
 
 struct EnvVars {
     conf: Option<PathBuf>,
+    buffer_size: Option<usize>,
     target: Option<String>,
 }
 
@@ -51,6 +55,7 @@ struct Config {
     stdin_log: Option<PathBuf>,
     stdout_log: Option<PathBuf>,
     stderr_log: Option<PathBuf>,
+    buffer_size: Option<usize>,
     target: Option<String>,
 }
 
@@ -107,6 +112,7 @@ fn main() -> Result<()> {
     let config = get_config(&cli_args, &env_vars).context("Error reading configuration")?;
 
     let target = get_target(&cli_args, &env_vars, &config).context("Error getting target")?;
+    let buffer_size = get_buffer_size(&cli_args, &env_vars, &config);
 
     let use_defaults = cli_args.stdin_log.is_none()
         && cli_args.stdout_log.is_none()
@@ -170,21 +176,51 @@ fn main() -> Result<()> {
     thread::scope(move |scope| {
         let (handle_tx, handle_rx) = mpsc::channel();
 
-        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_fd:stdin", || {
-            process_fd(
-                io::stdin(),
-                child_stdin,
-                stdin_log,
-                "stdin",
-                Some(signal_rx),
-            )
-        });
-        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_fd:stdout", || {
-            process_fd(child_stdout, io::stdout(), stdout_log, "stdout", None)
-        });
-        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_fd:stderr", || {
-            process_fd(child_stderr, io::stderr(), stderr_log, "stderr", None)
-        });
+        spawn_self_shipping_thread_in_scope(
+            scope,
+            handle_tx.clone(),
+            "process_fd:stdin",
+            move || {
+                process_fd(
+                    io::stdin(),
+                    child_stdin,
+                    buffer_size,
+                    stdin_log,
+                    "stdin",
+                    Some(signal_rx),
+                )
+            },
+        );
+        spawn_self_shipping_thread_in_scope(
+            scope,
+            handle_tx.clone(),
+            "process_fd:stdout",
+            move || {
+                process_fd(
+                    child_stdout,
+                    io::stdout(),
+                    buffer_size,
+                    stdout_log,
+                    "stdout",
+                    None,
+                )
+            },
+        );
+        spawn_self_shipping_thread_in_scope(
+            scope,
+            handle_tx.clone(),
+            "process_fd:stderr",
+            move || {
+                process_fd(
+                    child_stderr,
+                    io::stderr(),
+                    buffer_size,
+                    stderr_log,
+                    "stderr",
+                    None,
+                )
+            },
+        );
         spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_signals", || {
             process_signals(signals, mutex_child_guard_clone, signal_tx)
         });
@@ -238,6 +274,26 @@ fn get_env_vars() -> Result<EnvVars> {
                 Err(e) => {
                     return Err(anyhow::anyhow!(
                         "Error reading FDINTERCEPTRC environment variable: {}",
+                        e
+                    ));
+                }
+            }
+        },
+        buffer_size: {
+            match env::var("FDINTERCEPT_BUFFER_SIZE") {
+                Ok(env_var) => match env_var.parse() {
+                    Ok(buffer_size) => Some(buffer_size),
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Error parsing FDINTERCEPT_BUFFER_SIZE environment variable: {}",
+                            e
+                        ));
+                    }
+                },
+                Err(std::env::VarError::NotPresent) => None,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Error reading FDINTERCEPT_BUFFER_SIZE environment variable: {}",
                         e
                     ));
                 }
@@ -422,6 +478,14 @@ fn get_target_from_string(target: &str) -> Result<Target, StringTargetParseError
     })
 }
 
+fn get_buffer_size(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> usize {
+    cli_args
+        .buffer_size
+        .or(env_vars.buffer_size)
+        .or(config.buffer_size)
+        .unwrap_or(8192)
+}
+
 fn create_log_file(
     use_defaults: bool,
     cli_path: &Option<PathBuf>,
@@ -478,6 +542,7 @@ const SIGNAL_TOKEN: usize = 1;
 fn process_fd(
     mut src_fd: impl Read + AsRawFd,
     mut dst_fd: impl Write,
+    buffer_size: usize,
     mut maybe_log: Option<File>,
     log_descriptor: &'static str,
     maybe_signal_rx: Option<OwnedFd>,
@@ -486,13 +551,20 @@ fn process_fd(
         set_up_poll(&src_fd, &maybe_signal_rx, log_descriptor).context("Error setting up poll")?;
 
     let mut pending_events = mio::Events::with_capacity(2);
+    let mut buffer = vec![0; buffer_size];
+
     loop {
         poll.poll(&mut pending_events, Some(Duration::from_millis(100)))
             .context("Error polling for events")?;
         let events = pending_events.iter().collect();
 
-        let mut event_outcomes =
-            process_events_for_fd(events, &mut src_fd, &mut dst_fd, &mut maybe_log);
+        let mut event_outcomes = process_events_for_fd(
+            events,
+            &mut src_fd,
+            &mut dst_fd,
+            &mut buffer,
+            &mut maybe_log,
+        );
 
         match event_outcomes.swap_remove(0) {
             Ok(ProcessEventsForFdSuccess::DataLogged) => (),
@@ -587,19 +659,20 @@ impl std::error::Error for ProcessEventsForFdError {}
 
 fn process_events_for_fd(
     events: Vec<&mio::event::Event>,
-    mut src_fd: &mut impl Read,
-    mut dst_fd: &mut impl Write,
+    src_fd: &mut impl Read,
+    dst_fd: &mut impl Write,
+    buffer: &mut [u8],
     maybe_log: &mut Option<File>,
 ) -> Vec<Result<ProcessEventsForFdSuccess, ProcessEventsForFdError>> {
     if events.is_empty() {
         // We process this as an event readable.
-        return vec![inner_fd_event_readable(&mut src_fd, &mut dst_fd, maybe_log)];
+        return vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)];
     }
 
     if events.len() == 1 {
         match events[0].token() {
             mio::Token(token) if token == SRC_TOKEN => {
-                return vec![inner_fd_event_readable(&mut src_fd, &mut dst_fd, maybe_log)];
+                return vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)];
             }
             mio::Token(token) if token == SIGNAL_TOKEN => {
                 return vec![Ok(ProcessEventsForFdSuccess::Signal)];
@@ -609,7 +682,7 @@ fn process_events_for_fd(
     }
 
     vec![
-        inner_fd_event_readable(&mut src_fd, &mut dst_fd, maybe_log),
+        inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log),
         Ok(ProcessEventsForFdSuccess::Signal),
     ]
 }
@@ -617,11 +690,10 @@ fn process_events_for_fd(
 fn inner_fd_event_readable(
     src_fd: &mut impl Read,
     dst_fd: &mut impl Write,
+    buffer: &mut [u8],
     maybe_log: &mut Option<File>,
 ) -> Result<ProcessEventsForFdSuccess, ProcessEventsForFdError> {
-    let mut buffer = [0; 1024];
-
-    let bytes_read = match src_fd.read(&mut buffer) {
+    let bytes_read = match src_fd.read(buffer) {
         Ok(0) => {
             return Ok(ProcessEventsForFdSuccess::Eof);
         }
