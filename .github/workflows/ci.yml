@@ -27,6 +27,7 @@ jobs:
         with:
           path: ${{ env.pythonLocation }}
           key: ${{ runner.os }}-pip-pre-commit-4.2.0
+          restore-keys: ${{ runner.os }}-pip-
 
       - name: Install pre-commit
         run: |
@@ -39,6 +40,7 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: ${{ runner.os }}-pre-commit
 
       - name: Run pre-commit checks
         run: pre-commit run --all-files
@@ -51,6 +53,7 @@ jobs:
             ${{ env.CARGO_HOME }}/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo
 
       - name: Run tests
         timeout-minutes: 1
