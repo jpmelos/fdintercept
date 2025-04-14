@@ -506,19 +506,10 @@ fn process_fd(
     log_descriptor: &'static str,
     maybe_signal_rx: Option<OwnedFd>,
 ) -> Result<()> {
-    let mut poll = mio::Poll::new().context("Error creating poll of events")?;
+    let mut poll =
+        set_up_poll(&src_fd, &maybe_signal_rx, log_descriptor).context("Error setting up poll")?;
+
     let mut pending_events = mio::Events::with_capacity(2);
-
-    register_fd_into_poll(&poll, &src_fd, SRC_TOKEN).context(format!(
-        "Error registering {} source stream in poll of events",
-        log_descriptor
-    ))?;
-
-    if let Some(signal_rx) = &maybe_signal_rx {
-        register_fd_into_poll(&poll, signal_rx, SIGNAL_TOKEN)
-            .context("Error registering signal pipe in poll of events")?;
-    }
-
     loop {
         poll.poll(&mut pending_events, Some(Duration::from_millis(100)))
             .context("Error polling for events")?;
@@ -567,6 +558,26 @@ fn process_fd(
             }
         }
     }
+}
+
+fn set_up_poll(
+    src_fd: &impl AsRawFd,
+    maybe_signal_rx: &Option<OwnedFd>,
+    log_descriptor: &str,
+) -> Result<mio::Poll> {
+    let poll = mio::Poll::new().context("Error creating poll of events")?;
+
+    register_fd_into_poll(&poll, src_fd, SRC_TOKEN).context(format!(
+        "Error registering {} source stream in poll of events",
+        log_descriptor
+    ))?;
+
+    if let Some(signal_rx) = maybe_signal_rx {
+        register_fd_into_poll(&poll, signal_rx, SIGNAL_TOKEN)
+            .context("Error registering signal pipe in poll of events")?;
+    }
+
+    Ok(poll)
 }
 
 fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> Result<()> {
