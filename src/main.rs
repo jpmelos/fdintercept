@@ -143,6 +143,8 @@ fn main() -> Result<()> {
         std::process::exit(128 + signum);
     }
 
+    // We're using a pipe here, instead of a mpsc::channel, because pipes have file
+    // descriptors that we can wait on with `poll`.
     let (signal_rx, signal_tx) = pipe().context("Error creating pipe")?;
 
     let mut child_guard = ChildGuard {
