@@ -1,9 +1,11 @@
+mod process;
 mod settings;
 
 use anyhow::{Context, Result};
 use nix::fcntl::{self, OFlag};
-use nix::sys::signal::{Signal, kill};
-use nix::unistd::{Pid, pipe};
+use nix::sys::signal::Signal;
+use nix::unistd::pipe;
+use process::ChildGuard;
 use signal_hook::consts::{SIGCHLD, SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::{Signals, SignalsInfo};
 use std::fs::{File, OpenOptions};
@@ -12,51 +14,11 @@ use std::os::fd::OwnedFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ScopedJoinHandle};
 use std::time::Duration;
-use wait_timeout::ChildExt;
-
-struct ChildGuard {
-    child: Child,
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Err(e) = kill_child_process_with_grace_period(&mut self.child, Signal::SIGTERM) {
-            eprintln!("Error cleaning up child process: {}", e);
-        }
-    }
-}
-
-fn kill_child_process_with_grace_period(child: &mut Child, signal: Signal) -> Result<ExitStatus> {
-    if let Some(status) = child
-        .try_wait()
-        .context("Error waiting for child process")?
-    {
-        return Ok(status);
-    }
-
-    kill(Pid::from_raw(child.id() as i32), signal)
-        .context("Error sending signal to child process")?;
-
-    if let Some(status) = child
-        .wait_timeout(Duration::from_secs(15))
-        .context("Error waiting for child process")?
-    {
-        return Ok(status);
-    }
-
-    child
-        .kill()
-        .context("Error sending signal to child process")?;
-    child
-        .wait_timeout(Duration::from_secs(5))
-        .context("Error waiting for child process")?
-        .ok_or_else(|| anyhow::anyhow!("Sent SIGKILL, child still alive"))
-}
 
 fn main() -> Result<()> {
     let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM, SIGCHLD])
@@ -439,13 +401,15 @@ fn process_signals(
 ) -> Result<()> {
     // unwrap: Safe because `signals.forever()` is never empty.
     if let signum @ (SIGHUP | SIGINT | SIGTERM) = signals.forever().next().unwrap() {
-        kill_child_process_with_grace_period(
+        process::kill_child_process_with_grace_period(
             // unwrap: Safe because if this thread is running, the main thread is waiting for it to
             // finish, so it can't be holding this lock.
             &mut mutex_child_guard.lock().unwrap().child,
             // unwrap: Safe because this instance of `signals` only receives `SIGHUP`, `SIGINT`,
             // `SIGTERM`, and `SIGCHLD`, and they are guaranteed to parse into a valid signal.
             Signal::try_from(signum).unwrap(),
+            Duration::from_secs(15),
+            Duration::from_secs(5),
         )?;
     }
     // We don't care about an error here, because either the receiving end is still waiting to get

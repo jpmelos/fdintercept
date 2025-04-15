@@ -61,26 +61,26 @@ struct Config {
 }
 
 #[derive(Debug)]
-pub struct Target {
+pub(crate) struct Target {
     pub executable: NonEmptyString,
     pub args: Vec<String>,
 }
 
 #[derive(Debug)]
-pub struct ResolvedSettings {
-    pub stdin_log: Option<PathBuf>,
-    pub stdout_log: Option<PathBuf>,
-    pub stderr_log: Option<PathBuf>,
-    pub recreate_logs: bool,
-    pub buffer_size: usize,
-    pub target: Target,
+pub(crate) struct ResolvedSettings {
+    pub(crate) stdin_log: Option<PathBuf>,
+    pub(crate) stdout_log: Option<PathBuf>,
+    pub(crate) stderr_log: Option<PathBuf>,
+    pub(crate) recreate_logs: bool,
+    pub(crate) buffer_size: usize,
+    pub(crate) target: Target,
 }
 
-pub fn get_settings() -> Result<ResolvedSettings> {
+pub(crate) fn get_settings() -> Result<ResolvedSettings> {
     get_settings_with_raw_cli_args(std::env::args())
 }
 
-pub fn get_settings_with_raw_cli_args<A: IntoIterator<Item = String>>(
+fn get_settings_with_raw_cli_args<A: IntoIterator<Item = String>>(
     raw_cli_args: A,
 ) -> Result<ResolvedSettings> {
     let cli_args = CliArgs::parse_from(raw_cli_args);
