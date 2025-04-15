@@ -546,6 +546,13 @@ fn create_log_file(
     };
     match path {
         Some(p) => {
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).context(format!(
+                    "Failed to create parent directories to log file {}",
+                    p.display()
+                ))?;
+            }
+
             let mut options = OpenOptions::new();
             options.create(true).write(true);
             if recreate_logs {
