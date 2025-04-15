@@ -90,6 +90,8 @@ fdintercept accepts the following CLI arguments:
 - `--stderr-log`: Filename of the log file that will record stderr traffic. If
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
+- `--recreate-logs`: Re-create log files instead of appending to them. Default:
+  false.
 - `--buffer-size`: Size in bytes of the buffer used for I/O operations.
   Default: 8 KiB.
 - After `--`: The target command that will be executed.
@@ -119,6 +121,8 @@ These environment variables will be used, if defined:
 
 - `FDINTERCEPTRC`: Path to a configuration file. If relative, this is relative
   to the current working directory.
+- `FDINTERCEPT_RECREATE_LOGS`: Re-create log files instead of appending to
+  them. Default: false.
 - `FDINTERCEPT_BUFFER_SIZE`: Size in bytes of the buffer used for I/O
   operations. Default: 8 KiB.
 - `FDINTERCEPT_TARGET`: The target command that will be executed.
@@ -144,6 +148,8 @@ Here are the accepted fields:
 - `stderr_log`: Filename of the log file that will record stderr traffic. If
   relative, this is relative to the current working directory. Default:
   `stderr.log`.
+- `recreate_logs`: Re-create log files instead of appending to them. Default:
+  false.
 - `buffer-size`: Size in bytes of the buffer used for I/O operations. Default:
   8 KiB.
 - `target`: The target command that will be executed.
@@ -187,6 +193,7 @@ cargo build --release
 - [x] Look for configuration in a file passed in via an environment variable
   (`$FDINTERCEPTRC`)
 - [x] Configure buffer size for I/O operations
+- [x] Flag to re-create log files instead of appending to them.
 - [ ] Allow definition of message schemas, add separators between messages
 - [ ] Add timestamps to messages
 - [ ] Allow intercepting arbitrary file descriptors

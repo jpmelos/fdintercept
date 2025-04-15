@@ -31,19 +31,23 @@ struct CliArgs {
     conf: Option<PathBuf>,
 
     /// Filename of the log file that will record stdin traffic. If relative, this is relative to
-    /// the current working directory. Default: `stdin.log`.
+    /// the current working directory. Default: stdin.log.
     #[arg(long)]
     stdin_log: Option<PathBuf>,
 
     /// Filename of the log file that will record stdout traffic. If relative, this is relative to
-    /// the current working directory. Default: `stdout.log`.
+    /// the current working directory. Default: stdout.log.
     #[arg(long)]
     stdout_log: Option<PathBuf>,
 
     /// Filename of the log file that will record stderr traffic. If relative, this is relative to
-    /// the current working directory. Default: `stderr.log`.
+    /// the current working directory. Default: stderr.log.
     #[arg(long)]
     stderr_log: Option<PathBuf>,
+
+    /// Re-create log files instead of appending to them. Default: false.
+    #[arg(long)]
+    recreate_logs: bool,
 
     /// Size in bytes of the buffer used for I/O operations. Default: 8 KiB.
     #[arg(long)]
@@ -56,6 +60,7 @@ struct CliArgs {
 
 struct EnvVars {
     conf: Option<PathBuf>,
+    recreate_logs: Option<bool>,
     buffer_size: Option<usize>,
     target: Option<String>,
 }
@@ -65,6 +70,7 @@ struct Config {
     stdin_log: Option<PathBuf>,
     stdout_log: Option<PathBuf>,
     stderr_log: Option<PathBuf>,
+    recreate_logs: Option<bool>,
     buffer_size: Option<usize>,
     target: Option<String>,
 }
@@ -121,8 +127,9 @@ fn main() -> Result<()> {
     let env_vars = get_env_vars().context("Error reading environment variables")?;
     let config = get_config(&cli_args, &env_vars).context("Error reading configuration")?;
 
-    let target = get_target(&cli_args, &env_vars, &config).context("Error getting target")?;
+    let recreate_logs = get_recreate_logs(&cli_args, &env_vars, &config);
     let buffer_size = get_buffer_size(&cli_args, &env_vars, &config);
+    let target = get_target(&cli_args, &env_vars, &config).context("Error getting target")?;
 
     let use_defaults = cli_args.stdin_log.is_none()
         && cli_args.stdout_log.is_none()
@@ -135,18 +142,21 @@ fn main() -> Result<()> {
         use_defaults,
         &cli_args.stdin_log,
         &config.stdin_log,
+        recreate_logs,
         "stdin.log",
     )?;
     let stdout_log = create_log_file(
         use_defaults,
         &cli_args.stdout_log,
         &config.stdout_log,
+        recreate_logs,
         "stdout.log",
     )?;
     let stderr_log = create_log_file(
         use_defaults,
         &cli_args.stderr_log,
         &config.stderr_log,
+        recreate_logs,
         "stderr.log",
     )?;
 
@@ -284,6 +294,26 @@ fn get_env_vars() -> Result<EnvVars> {
                 Err(e) => {
                     return Err(anyhow::anyhow!(
                         "Error reading FDINTERCEPTRC environment variable: {}",
+                        e
+                    ));
+                }
+            }
+        },
+        recreate_logs: {
+            match env::var("FDINTERCEPT_RECREATE_LOGS") {
+                Ok(env_var) => match env_var.parse() {
+                    Ok(recreate_logs) => Some(recreate_logs),
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Error parsing FDINTERCEPT_RECREATE_LOGS environment variable: {}",
+                            e
+                        ));
+                    }
+                },
+                Err(std::env::VarError::NotPresent) => None,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Error reading FDINTERCEPT_RECREATE_LOGS environment variable: {}",
                         e
                     ));
                 }
@@ -485,6 +515,14 @@ fn get_target_from_string(target: &str) -> Result<Target, StringTargetParseError
     })
 }
 
+fn get_recreate_logs(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> bool {
+    cli_args.recreate_logs
+        || env_vars
+            .recreate_logs
+            .or(config.recreate_logs)
+            .unwrap_or(false)
+}
+
 fn get_buffer_size(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> usize {
     cli_args
         .buffer_size
@@ -497,6 +535,7 @@ fn create_log_file(
     use_defaults: bool,
     cli_path: &Option<PathBuf>,
     config_path: &Option<PathBuf>,
+    recreate_logs: bool,
     default_name: &str,
 ) -> Result<Option<File>> {
     let path = match (cli_path, config_path) {
@@ -506,13 +545,19 @@ fn create_log_file(
         _ => None,
     };
     match path {
-        Some(p) => Ok(Some(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&p)
-                .context(format!("Failed to create/open log file: {}", p.display()))?,
-        )),
+        Some(p) => {
+            let mut options = OpenOptions::new();
+            options.create(true).write(true);
+            if recreate_logs {
+                options.truncate(true);
+            } else {
+                options.append(true);
+            }
+            Ok(Some(options.open(&p).context(format!(
+                "Failed to create/open log file: {}",
+                p.display()
+            ))?))
+        }
         None => Ok(None),
     }
 }
