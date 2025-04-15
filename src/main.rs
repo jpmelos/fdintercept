@@ -127,38 +127,30 @@ fn main() -> Result<()> {
     let env_vars = get_env_vars().context("Error reading environment variables")?;
     let config = get_config(&cli_args, &env_vars).context("Error reading configuration")?;
 
+    let use_defaults = get_use_defaults(&cli_args, &config);
+    let stdin_log_name = get_log_name(LogFd::Stdin, &cli_args, &config, use_defaults, "stdin.log");
+    let stdout_log_name = get_log_name(
+        LogFd::Stdout,
+        &cli_args,
+        &config,
+        use_defaults,
+        "stdout.log",
+    );
+    let stderr_log_name = get_log_name(
+        LogFd::Stderr,
+        &cli_args,
+        &config,
+        use_defaults,
+        "stderr.log",
+    );
+
     let recreate_logs = get_recreate_logs(&cli_args, &env_vars, &config);
     let buffer_size = get_buffer_size(&cli_args, &env_vars, &config);
     let target = get_target(&cli_args, &env_vars, &config).context("Error getting target")?;
 
-    let use_defaults = cli_args.stdin_log.is_none()
-        && cli_args.stdout_log.is_none()
-        && cli_args.stderr_log.is_none()
-        && config.stdin_log.is_none()
-        && config.stdout_log.is_none()
-        && config.stderr_log.is_none();
-
-    let stdin_log = create_log_file(
-        use_defaults,
-        &cli_args.stdin_log,
-        &config.stdin_log,
-        recreate_logs,
-        "stdin.log",
-    )?;
-    let stdout_log = create_log_file(
-        use_defaults,
-        &cli_args.stdout_log,
-        &config.stdout_log,
-        recreate_logs,
-        "stdout.log",
-    )?;
-    let stderr_log = create_log_file(
-        use_defaults,
-        &cli_args.stderr_log,
-        &config.stderr_log,
-        recreate_logs,
-        "stderr.log",
-    )?;
+    let stdin_log = create_log_file(stdin_log_name, recreate_logs)?;
+    let stdout_log = create_log_file(stdout_log_name, recreate_logs)?;
+    let stderr_log = create_log_file(stderr_log_name, recreate_logs)?;
 
     // Don't even start the child process if we were already told to terminate.
     if let Some(signum) = signals.pending().next() {
@@ -426,6 +418,46 @@ fn parse_config_contents(contents: &str) -> Result<Config> {
     toml::from_str(contents).context("Error parsing TOML configuration")
 }
 
+fn get_use_defaults(cli_args: &CliArgs, config: &Config) -> bool {
+    cli_args.stdin_log.is_none()
+        && cli_args.stdout_log.is_none()
+        && cli_args.stderr_log.is_none()
+        && config.stdin_log.is_none()
+        && config.stdout_log.is_none()
+        && config.stderr_log.is_none()
+}
+
+enum LogFd {
+    Stdin,
+    Stdout,
+    Stderr,
+}
+
+fn get_log_name(
+    log_fd: LogFd,
+    cli_args: &CliArgs,
+    config: &Config,
+    use_default: bool,
+    default_name: &str,
+) -> Option<PathBuf> {
+    let cli_name = match log_fd {
+        LogFd::Stdin => &cli_args.stdin_log,
+        LogFd::Stdout => &cli_args.stdout_log,
+        LogFd::Stderr => &cli_args.stderr_log,
+    };
+    let config_name = match log_fd {
+        LogFd::Stdin => &config.stdin_log,
+        LogFd::Stdout => &config.stdout_log,
+        LogFd::Stderr => &config.stderr_log,
+    };
+    match (cli_name, config_name) {
+        (Some(p), _) => Some(p.clone()),
+        (None, Some(p)) => Some(p.clone()),
+        (None, None) if use_default => Some(PathBuf::from(default_name)),
+        _ => None,
+    }
+}
+
 fn get_target(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> Result<Target> {
     match get_target_from_cli_arg(&cli_args.target) {
         Ok(target) => return Ok(target),
@@ -531,42 +563,30 @@ fn get_buffer_size(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> u
         .unwrap_or(8192)
 }
 
-fn create_log_file(
-    use_defaults: bool,
-    cli_path: &Option<PathBuf>,
-    config_path: &Option<PathBuf>,
-    recreate_logs: bool,
-    default_name: &str,
-) -> Result<Option<File>> {
-    let path = match (cli_path, config_path) {
-        (Some(p), _) => Some(p.clone()),
-        (None, Some(p)) => Some(p.clone()),
-        (None, None) if use_defaults => Some(PathBuf::from(default_name)),
-        _ => None,
+fn create_log_file(maybe_path: Option<PathBuf>, recreate_logs: bool) -> Result<Option<File>> {
+    let path = match maybe_path {
+        Some(p) => p,
+        None => return Ok(None),
     };
-    match path {
-        Some(p) => {
-            if let Some(parent) = p.parent() {
-                std::fs::create_dir_all(parent).context(format!(
-                    "Failed to create parent directories to log file {}",
-                    p.display()
-                ))?;
-            }
 
-            let mut options = OpenOptions::new();
-            options.create(true).write(true);
-            if recreate_logs {
-                options.truncate(true);
-            } else {
-                options.append(true);
-            }
-            Ok(Some(options.open(&p).context(format!(
-                "Failed to create/open log file: {}",
-                p.display()
-            ))?))
-        }
-        None => Ok(None),
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context(format!(
+            "Failed to create parent directories to log file {}",
+            path.display()
+        ))?;
     }
+
+    let mut options = OpenOptions::new();
+    options.create(true).write(true);
+    if recreate_logs {
+        options.truncate(true);
+    } else {
+        options.append(true);
+    }
+    Ok(Some(options.open(&path).context(format!(
+        "Failed to create/open log file: {}",
+        path.display()
+    ))?))
 }
 
 fn spawn_self_shipping_thread_in_scope<'scope, F>(
