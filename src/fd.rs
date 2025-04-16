@@ -255,7 +255,6 @@ fn inner_fd_event_readable(
 mod tests {
     use super::*;
     use std::os::unix;
-    use tempfile::tempfile;
 
     struct MockRead {
         responses: Vec<io::Result<usize>>,
@@ -445,27 +444,47 @@ mod tests {
     mod set_up_poll {
         use super::*;
         use nix::unistd::pipe;
+        use std::fs::File;
+        use std::os::fd::IntoRawFd;
+        use std::os::unix::io::FromRawFd;
 
         #[test]
         fn success_without_signal() {
-            let file = tempfile().unwrap();
+            let file = create_file_from_pipe();
             set_up_poll(&file, &None, "test").unwrap();
         }
 
         #[test]
         fn success_with_signal() {
-            let file = tempfile().unwrap();
+            let file = create_file_from_pipe();
             let (signal_rx, _signal_tx) = pipe().unwrap();
             set_up_poll(&file, &Some(signal_rx), "test").unwrap();
+        }
+
+        fn create_file_from_pipe() -> File {
+            let (_, tx) = pipe().unwrap();
+            // Convert to `File`.
+            unsafe { File::from_raw_fd(tx.into_raw_fd()) }
         }
     }
 
     mod register_fd_into_poll {
         use super::*;
+        use nix::unistd::pipe;
+        use std::fs::File;
+        use std::os::fd::IntoRawFd;
+        use std::os::unix::io::FromRawFd;
 
         #[test]
         fn success() {
-            register_fd_into_poll(&mio::Poll::new().unwrap(), &tempfile().unwrap(), 42).unwrap();
+            register_fd_into_poll(&mio::Poll::new().unwrap(), &create_file_from_pipe(), 42)
+                .unwrap();
+        }
+
+        fn create_file_from_pipe() -> File {
+            let (_, tx) = pipe().unwrap();
+            // Convert to `File`.
+            unsafe { File::from_raw_fd(tx.into_raw_fd()) }
         }
     }
 
