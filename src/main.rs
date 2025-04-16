@@ -1,19 +1,16 @@
+mod fd;
 mod process;
 mod settings;
 
 use anyhow::{Context, Result};
-use nix::fcntl::{self, OFlag};
 use nix::sys::signal::Signal;
 use nix::unistd::pipe;
 use process::ChildGuard;
 use signal_hook::consts::{SIGCHLD, SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::{Signals, SignalsInfo};
-use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io;
 use std::os::fd::OwnedFd;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -26,9 +23,9 @@ fn main() -> Result<()> {
 
     let settings = settings::get_settings()?;
 
-    let stdin_log = create_log_file(&settings.stdin_log, settings.recreate_logs)?;
-    let stdout_log = create_log_file(&settings.stdout_log, settings.recreate_logs)?;
-    let stderr_log = create_log_file(&settings.stderr_log, settings.recreate_logs)?;
+    let stdin_log = fd::create_log_file(&settings.stdin_log, settings.recreate_logs)?;
+    let stdout_log = fd::create_log_file(&settings.stdout_log, settings.recreate_logs)?;
+    let stderr_log = fd::create_log_file(&settings.stderr_log, settings.recreate_logs)?;
 
     // Don't even start the child process if we were already told to terminate.
     if let Some(signum) = signals.pending().next() {
@@ -71,7 +68,7 @@ fn main() -> Result<()> {
             handle_tx.clone(),
             "process_fd:stdin",
             move || {
-                process_fd(
+                fd::process_fd(
                     io::stdin(),
                     child_stdin,
                     settings.buffer_size,
@@ -86,7 +83,7 @@ fn main() -> Result<()> {
             handle_tx.clone(),
             "process_fd:stdout",
             move || {
-                process_fd(
+                fd::process_fd(
                     child_stdout,
                     io::stdout(),
                     settings.buffer_size,
@@ -101,7 +98,7 @@ fn main() -> Result<()> {
             handle_tx.clone(),
             "process_fd:stderr",
             move || {
-                process_fd(
+                fd::process_fd(
                     child_stderr,
                     io::stderr(),
                     settings.buffer_size,
@@ -150,32 +147,6 @@ fn main() -> Result<()> {
     );
 }
 
-fn create_log_file(maybe_path: &Option<PathBuf>, recreate_logs: bool) -> Result<Option<File>> {
-    let path = match maybe_path {
-        Some(p) => p,
-        None => return Ok(None),
-    };
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).context(format!(
-            "Failed to create parent directories to log file {}",
-            path.display()
-        ))?;
-    }
-
-    let mut options = OpenOptions::new();
-    options.create(true).write(true);
-    if recreate_logs {
-        options.truncate(true);
-    } else {
-        options.append(true);
-    }
-    Ok(Some(options.open(path).context(format!(
-        "Failed to create/open log file: {}",
-        path.display()
-    ))?))
-}
-
 fn spawn_self_shipping_thread_in_scope<'scope, F>(
     scope: &'scope thread::Scope<'scope, '_>,
     tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
@@ -200,198 +171,6 @@ fn spawn_self_shipping_thread_in_scope<'scope, F>(
 
     // unwrap: Safe because `handle_rx` is guaranteed to be connected.
     handle_tx.send(handle).unwrap();
-}
-
-const SRC_TOKEN: usize = 0;
-const SIGNAL_TOKEN: usize = 1;
-
-fn process_fd(
-    mut src_fd: impl Read + AsRawFd,
-    mut dst_fd: impl Write,
-    buffer_size: usize,
-    mut maybe_log: Option<File>,
-    log_descriptor: &'static str,
-    maybe_signal_rx: Option<OwnedFd>,
-) -> Result<()> {
-    let mut poll =
-        set_up_poll(&src_fd, &maybe_signal_rx, log_descriptor).context("Error setting up poll")?;
-
-    let mut pending_events = mio::Events::with_capacity(2);
-    let mut buffer = vec![0; buffer_size];
-
-    loop {
-        poll.poll(&mut pending_events, Some(Duration::from_millis(100)))
-            .context("Error polling for events")?;
-        let events = pending_events.iter().collect();
-
-        let mut event_outcomes = process_events_for_fd(
-            events,
-            &mut src_fd,
-            &mut dst_fd,
-            &mut buffer,
-            &mut maybe_log,
-        );
-
-        match event_outcomes.swap_remove(0) {
-            Ok(ProcessEventsForFdSuccess::DataLogged) => (),
-            Ok(ProcessEventsForFdSuccess::Eof) => return Ok(()),
-            Ok(ProcessEventsForFdSuccess::Signal) => return Ok(()),
-            Err(ProcessEventsForFdError::Log(e)) => {
-                eprintln!(
-                    "Error writing to {} log, disabling logging: {}",
-                    log_descriptor, e
-                );
-                maybe_log.take();
-            }
-            Err(e) => {
-                return Err(e).context(format!(
-                    "Error processing event for stream {}",
-                    log_descriptor
-                ));
-            }
-        }
-
-        if event_outcomes.len() == 1 {
-            // There was a signal event, and we already processed the fd readable event
-            // that happened simultaneously. We can just return.
-            return Ok(());
-        }
-    }
-}
-
-fn set_up_poll(
-    src_fd: &impl AsRawFd,
-    maybe_signal_rx: &Option<OwnedFd>,
-    log_descriptor: &str,
-) -> Result<mio::Poll> {
-    let poll = mio::Poll::new().context("Error creating poll of events")?;
-
-    register_fd_into_poll(&poll, src_fd, SRC_TOKEN).context(format!(
-        "Error registering {} source stream in poll of events",
-        log_descriptor
-    ))?;
-
-    if let Some(signal_rx) = maybe_signal_rx {
-        register_fd_into_poll(&poll, signal_rx, SIGNAL_TOKEN)
-            .context("Error registering signal pipe in poll of events")?;
-    }
-
-    Ok(poll)
-}
-
-fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> Result<()> {
-    let raw_fd = fd.as_raw_fd();
-
-    let flags = fcntl::fcntl(raw_fd, fcntl::F_GETFL).context("Error getting flags")?;
-    fcntl::fcntl(
-        raw_fd,
-        fcntl::F_SETFL(OFlag::from_bits_truncate(flags as i32) | OFlag::O_NONBLOCK),
-    )
-    .context("Error setting source fd as non-blocking")?;
-
-    poll.registry().register(
-        &mut mio::unix::SourceFd(&raw_fd),
-        mio::Token(token),
-        mio::Interest::READABLE,
-    )?;
-
-    Ok(())
-}
-
-enum ProcessEventsForFdSuccess {
-    DataLogged,
-    Eof,
-    Signal,
-}
-
-#[derive(Debug)]
-enum ProcessEventsForFdError {
-    Read(std::io::Error),
-    Write(std::io::Error),
-    Log(std::io::Error),
-}
-
-impl std::fmt::Display for ProcessEventsForFdError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Read(e) => write!(f, "Failed to read data: {}", e),
-            Self::Write(e) => write!(f, "Failed to write data: {}", e),
-            Self::Log(e) => write!(f, "Failed to log data: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for ProcessEventsForFdError {}
-
-fn process_events_for_fd(
-    events: Vec<&mio::event::Event>,
-    src_fd: &mut impl Read,
-    dst_fd: &mut impl Write,
-    buffer: &mut [u8],
-    maybe_log: &mut Option<File>,
-) -> Vec<Result<ProcessEventsForFdSuccess, ProcessEventsForFdError>> {
-    if events.is_empty() {
-        // We process this as an event readable.
-        return vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)];
-    }
-
-    if events.len() == 1 {
-        match events[0].token() {
-            mio::Token(token) if token == SRC_TOKEN => {
-                return vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)];
-            }
-            mio::Token(token) if token == SIGNAL_TOKEN => {
-                return vec![Ok(ProcessEventsForFdSuccess::Signal)];
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    // There is a readable event for the fd, and a signal. We always want to process the readable
-    // event first so we don't miss anything that should be logged, and then the signal, which will
-    // kill the thread.
-    vec![
-        inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log),
-        Ok(ProcessEventsForFdSuccess::Signal),
-    ]
-}
-
-fn inner_fd_event_readable(
-    src_fd: &mut impl Read,
-    dst_fd: &mut impl Write,
-    buffer: &mut [u8],
-    maybe_log: &mut Option<File>,
-) -> Result<ProcessEventsForFdSuccess, ProcessEventsForFdError> {
-    let bytes_read = match src_fd.read(buffer) {
-        Ok(0) => {
-            return Ok(ProcessEventsForFdSuccess::Eof);
-        }
-        Ok(bytes_read) => bytes_read,
-        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-            return Ok(ProcessEventsForFdSuccess::DataLogged);
-        }
-        Err(e) => {
-            return Err(ProcessEventsForFdError::Read(e));
-        }
-    };
-
-    match dst_fd.write_all(&buffer[..bytes_read]) {
-        Ok(_) => (),
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-            return Ok(ProcessEventsForFdSuccess::Eof);
-        }
-        Err(e) => {
-            return Err(ProcessEventsForFdError::Write(e));
-        }
-    }
-
-    if let Some(log) = maybe_log {
-        if let Err(e) = log.write_all(&buffer[..bytes_read]) {
-            return Err(ProcessEventsForFdError::Log(e));
-        }
-    }
-
-    Ok(ProcessEventsForFdSuccess::DataLogged)
 }
 
 fn process_signals(
