@@ -1,22 +1,20 @@
 mod fd;
 mod process;
 mod settings;
+mod signals;
 mod threads;
 
 use anyhow::{Context, Result};
-use nix::sys::signal::Signal;
 use nix::unistd::pipe;
 use process::ChildGuard;
 use signal_hook::consts::{SIGCHLD, SIGHUP, SIGINT, SIGTERM};
-use signal_hook::iterator::{Signals, SignalsInfo};
+use signal_hook::iterator::Signals;
 use std::io;
-use std::os::fd::OwnedFd;
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
 fn main() -> Result<()> {
     let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM, SIGCHLD])
@@ -113,7 +111,7 @@ fn main() -> Result<()> {
             scope,
             handle_tx.clone(),
             "process_signals",
-            || process_signals(signals, mutex_child_guard_clone, signal_tx),
+            || signals::process_signals(signals, mutex_child_guard_clone, signal_tx),
         );
 
         drop(handle_tx);
@@ -149,29 +147,4 @@ fn main() -> Result<()> {
                 }
             }),
     );
-}
-
-fn process_signals(
-    mut signals: SignalsInfo,
-    mutex_child_guard: Arc<Mutex<ChildGuard>>,
-    signal_tx: OwnedFd,
-) -> Result<()> {
-    // unwrap: Safe because `signals.forever()` is never empty.
-    if let signum @ (SIGHUP | SIGINT | SIGTERM) = signals.forever().next().unwrap() {
-        process::kill_child_process_with_grace_period(
-            // unwrap: Safe because if this thread is running, the main thread is waiting for it to
-            // finish, so it can't be holding this lock.
-            &mut mutex_child_guard.lock().unwrap().child,
-            // unwrap: Safe because this instance of `signals` only receives `SIGHUP`, `SIGINT`,
-            // `SIGTERM`, and `SIGCHLD`, and they are guaranteed to parse into a valid signal.
-            Signal::try_from(signum).unwrap(),
-            Duration::from_secs(15),
-            Duration::from_secs(5),
-        )?;
-    }
-    // We don't care about an error here, because either the receiving end is still waiting to get
-    // a message, or it has been already closed because the thread that owned it already died, and
-    // then we don't care.
-    let _ = nix::unistd::write(signal_tx, &[1]);
-    Ok(())
 }
