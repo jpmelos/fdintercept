@@ -1,6 +1,7 @@
 mod fd;
 mod process;
 mod settings;
+mod threads;
 
 use anyhow::{Context, Result};
 use nix::sys::signal::Signal;
@@ -14,7 +15,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::thread::{self, ScopedJoinHandle};
+use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<()> {
@@ -63,7 +64,7 @@ fn main() -> Result<()> {
     thread::scope(move |scope| {
         let (handle_tx, handle_rx) = mpsc::channel();
 
-        spawn_self_shipping_thread_in_scope(
+        threads::spawn_self_shipping_thread_in_scope(
             scope,
             handle_tx.clone(),
             "process_fd:stdin",
@@ -78,7 +79,7 @@ fn main() -> Result<()> {
                 )
             },
         );
-        spawn_self_shipping_thread_in_scope(
+        threads::spawn_self_shipping_thread_in_scope(
             scope,
             handle_tx.clone(),
             "process_fd:stdout",
@@ -93,7 +94,7 @@ fn main() -> Result<()> {
                 )
             },
         );
-        spawn_self_shipping_thread_in_scope(
+        threads::spawn_self_shipping_thread_in_scope(
             scope,
             handle_tx.clone(),
             "process_fd:stderr",
@@ -108,9 +109,12 @@ fn main() -> Result<()> {
                 )
             },
         );
-        spawn_self_shipping_thread_in_scope(scope, handle_tx.clone(), "process_signals", || {
-            process_signals(signals, mutex_child_guard_clone, signal_tx)
-        });
+        threads::spawn_self_shipping_thread_in_scope(
+            scope,
+            handle_tx.clone(),
+            "process_signals",
+            || process_signals(signals, mutex_child_guard_clone, signal_tx),
+        );
 
         drop(handle_tx);
 
@@ -145,32 +149,6 @@ fn main() -> Result<()> {
                 }
             }),
     );
-}
-
-fn spawn_self_shipping_thread_in_scope<'scope, F>(
-    scope: &'scope thread::Scope<'scope, '_>,
-    tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
-    thread_name: &'static str,
-    func: F,
-) where
-    F: FnOnce() -> Result<()> + Send + 'scope,
-{
-    let (handle_tx, handle_rx) = mpsc::channel();
-
-    let handle = std::thread::Builder::new()
-        .name(thread_name.to_string())
-        .spawn_scoped(scope, move || {
-            let result = func();
-            // unwrap: Safe because `handle_tx` is guaranteed to have sent the handle.
-            let handle = handle_rx.recv().unwrap();
-            // unwrap: Safe because the receiving side is guaranteed to still be connected.
-            tx.send((thread_name, handle)).unwrap();
-            result
-        })
-        .unwrap();
-
-    // unwrap: Safe because `handle_rx` is guaranteed to be connected.
-    handle_tx.send(handle).unwrap();
 }
 
 fn process_signals(
