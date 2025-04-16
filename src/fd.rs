@@ -95,8 +95,13 @@ pub(crate) fn process_fd(
     let mut buffer = vec![0; buffer_size];
 
     loop {
-        poll.poll(&mut pending_events, Some(Duration::from_millis(100)))
-            .context("Error polling for events")?;
+        // If interrupted by a signal, just continue.
+        match poll.poll(&mut pending_events, Some(Duration::from_millis(100))) {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => (),
+            Err(e) => return Err(e).context("Error polling for events"),
+            _ => (),
+        }
+
         let events = pending_events
             .iter()
             .map(|e| Event::from_mio_token(e.token()))
