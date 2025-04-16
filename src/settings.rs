@@ -406,13 +406,11 @@ fn get_target_from_string(target: &str) -> Result<Target, StringTargetParseError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     mod get_settings_with_raw_cli_args {
         use super::*;
 
         #[test]
-        #[serial]
         fn from_cli_args() {
             let settings = get_settings_with_raw_cli_args(vec![
                 "fdintercept".to_string(),
@@ -448,7 +446,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn from_env_vars() {
             temp_env::with_vars(
                 vec![
@@ -472,7 +469,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn from_config() {
             let tmp_dir = tempfile::TempDir::new().unwrap();
             let config_path = tmp_dir.path().join("config.toml");
@@ -512,7 +508,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn with_no_log_paths() {
             let settings = get_settings_with_raw_cli_args(vec![
                 "fdintercept".to_string(),
@@ -533,7 +528,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn with_invalid_env_var() {
             temp_env::with_vars(
                 vec![("FDINTERCEPT_BUFFER_SIZE", Some("not_a_number"))],
@@ -555,7 +549,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn with_invalid_config() {
             let tmp_dir = tempfile::TempDir::new().unwrap();
             let config_path = tmp_dir.path().join("config.toml");
@@ -576,7 +569,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn test_settings_with_missing_target() {
             assert!(
                 get_settings_with_raw_cli_args(vec!["fdintercept".to_string()])
@@ -591,7 +583,6 @@ mod tests {
         use super::*;
 
         #[test]
-        #[serial]
         fn empty_environment() {
             temp_env::with_vars(
                 vec![
@@ -611,7 +602,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn valid_conf() {
             temp_env::with_vars(vec![("FDINTERCEPTRC", Some("/path/to/config"))], || {
                 assert_eq!(
@@ -622,7 +612,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn empty_conf() {
             temp_env::with_vars(vec![("FDINTERCEPTRC", Some(""))], || {
                 assert_eq!(
@@ -633,7 +622,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn valid_recreate_logs() {
             temp_env::with_vars(vec![("FDINTERCEPT_RECREATE_LOGS", Some("true"))], || {
                 assert_eq!(get_env_vars().unwrap().recreate_logs, Some(true));
@@ -641,7 +629,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn invalid_recreate_logs() {
             temp_env::with_vars(
                 vec![("FDINTERCEPT_RECREATE_LOGS", Some("not_a_bool"))],
@@ -656,7 +643,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn valid_buffer_size() {
             temp_env::with_vars(vec![("FDINTERCEPT_BUFFER_SIZE", Some("1024"))], || {
                 assert_eq!(get_env_vars().unwrap().buffer_size, Some(1024));
@@ -664,7 +650,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn invalid_buffer_size() {
             temp_env::with_vars(
                 vec![("FDINTERCEPT_BUFFER_SIZE", Some("not_a_number"))],
@@ -680,7 +665,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn valid_target() {
             temp_env::with_vars(vec![("FDINTERCEPT_TARGET", Some("echo hello"))], || {
                 assert_eq!(
@@ -691,7 +675,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn all_valid_vars() {
             temp_env::with_vars(
                 vec![
@@ -825,7 +808,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn from_home_dir() {
             let tmp_dir = TempDir::new().unwrap();
             let config_path = tmp_dir.path().join(".fdinterceptrc.toml");
@@ -846,7 +828,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn from_home_dir_invalid_toml() {
             let tmp_dir = TempDir::new().unwrap();
             let config_path = tmp_dir.path().join(".fdinterceptrc.toml");
@@ -869,7 +850,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn if_home_dir_not_found_move_on() {
             let tmp_dir = TempDir::new().unwrap();
 
@@ -885,7 +865,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn from_xdg_config_home() {
             let tmp_dir = TempDir::new().unwrap();
             fs::create_dir_all(tmp_dir.path().join("fdintercept")).unwrap();
@@ -910,7 +889,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn from_xdg_config_home_invalid_toml() {
             let tmp_dir = TempDir::new().unwrap();
             fs::create_dir_all(tmp_dir.path().join("fdintercept")).unwrap();
@@ -937,7 +915,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn if_xdg_config_home_dir_not_found_move_on() {
             let tmp_dir = TempDir::new().unwrap();
 
@@ -956,7 +933,6 @@ mod tests {
         }
 
         #[test]
-        #[serial]
         fn no_config_found() {
             let cli_args = CliArgs::default();
             let env_vars = EnvVars::default();
