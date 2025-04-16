@@ -6,7 +6,6 @@ use std::io::{ErrorKind, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
-use tempfile::TempDir;
 
 #[test]
 fn test_normal_termination() {
