@@ -6,6 +6,7 @@ use std::io::{ErrorKind, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+use tempfile::TempDir;
 
 #[test]
 fn test_normal_termination() {
@@ -101,6 +102,122 @@ fn test_child_process_error() {
         )
         .unwrap(),
         "Error message\n"
+    );
+}
+
+#[test]
+fn test_very_small_buffer_size() {
+    let child_binary_dir = get_child_binary_dir();
+    let mut fdintercept = Command::new("target/debug/fdintercept")
+        .args([
+            "--buffer-size",
+            "16", // Very small buffer to test chunking
+            "--stdin-log",
+            child_binary_dir
+                .join(format!("stdin.{:?}.log", std::thread::current().id()))
+                .to_str()
+                .unwrap(),
+            "--stdout-log",
+            child_binary_dir
+                .join(format!("stdout.{:?}.log", std::thread::current().id()))
+                .to_str()
+                .unwrap(),
+            "--stderr-log",
+            child_binary_dir
+                .join(format!("stderr.{:?}.log", std::thread::current().id()))
+                .to_str()
+                .unwrap(),
+            "--recreate-logs",
+            "--",
+            child_binary_dir.join(CHILD_BINARY_NAME).to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = fdintercept.stdin.take().unwrap();
+    let test_data = "hello world this is a longer string\nexit\n";
+    stdin.write_all(test_data.as_bytes()).unwrap();
+    let status = fdintercept.wait().unwrap();
+
+    assert!(status.success());
+    assert_eq!(
+        fs::read_to_string(
+            child_binary_dir.join(format!("stdin.{:?}.log", std::thread::current().id()))
+        )
+        .unwrap(),
+        test_data
+    );
+}
+
+#[test]
+fn test_nonexistent_command() {
+    let child_binary_dir = get_child_binary_dir();
+    let result = Command::new("target/debug/fdintercept")
+        .args([
+            "--stdin-log",
+            child_binary_dir
+                .join(format!("stdin.{:?}.log", std::thread::current().id()))
+                .to_str()
+                .unwrap(),
+            "--",
+            "nonexistent_command",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+
+    assert_eq!(result.unwrap().wait().unwrap().code().unwrap(), 1);
+}
+
+#[test]
+fn test_append() {
+    let child_binary_dir = get_child_binary_dir();
+    let stdout_log = child_binary_dir.join(format!("stdout.{:?}.log", std::thread::current().id()));
+
+    // First run.
+    let mut fdintercept = Command::new("target/debug/fdintercept")
+        .args([
+            "--stdout-log",
+            stdout_log.to_str().unwrap(),
+            "--recreate-logs",
+            "--",
+            child_binary_dir.join(CHILD_BINARY_NAME).to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = fdintercept.stdin.take().unwrap();
+    stdin.write_all(b"hello\nexit\n").unwrap();
+    fdintercept.wait().unwrap();
+
+    // Second run without, --recreate-logs.
+    let mut fdintercept = Command::new("target/debug/fdintercept")
+        .args([
+            "--stdout-log",
+            stdout_log.to_str().unwrap(),
+            "--",
+            child_binary_dir.join(CHILD_BINARY_NAME).to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = fdintercept.stdin.take().unwrap();
+    stdin.write_all(b"world\nexit\n").unwrap();
+    fdintercept.wait().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&stdout_log).unwrap(),
+        "Starting...\nEcho: hello\nStarting...\nEcho: world\n"
     );
 }
 
