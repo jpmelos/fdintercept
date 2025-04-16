@@ -418,16 +418,16 @@ mod tests {
             let dst = Rc::new(RefCell::new(dst));
             let log_file = Rc::new(RefCell::new(log_file));
 
-            let result = process_fd(
+            process_fd(
                 src,
                 RefCellWriter(dst.clone()),
                 1024,
                 Some(RefCellWriter(log_file.clone())),
                 "test",
                 None,
-            );
+            )
+            .unwrap();
 
-            assert!(result.is_ok());
             assert_eq!(dst.borrow().written_data.len(), 2);
             assert_eq!(dst.borrow().written_data[0].len(), 5);
             assert_eq!(dst.borrow().written_data[1].len(), 3);
@@ -444,16 +444,14 @@ mod tests {
         #[test]
         fn success_without_signal() {
             let file = tempfile().unwrap();
-            let result = set_up_poll(&file, &None, "test");
-            assert!(result.is_ok());
+            set_up_poll(&file, &None, "test").unwrap();
         }
 
         #[test]
         fn success_with_signal() {
             let file = tempfile().unwrap();
             let (signal_rx, _signal_tx) = pipe().unwrap();
-            let result = set_up_poll(&file, &Some(signal_rx), "test");
-            assert!(result.is_ok());
+            set_up_poll(&file, &Some(signal_rx), "test").unwrap();
         }
     }
 
@@ -462,9 +460,7 @@ mod tests {
 
         #[test]
         fn success() {
-            assert!(
-                register_fd_into_poll(&mio::Poll::new().unwrap(), &tempfile().unwrap(), 42).is_ok()
-            );
+            register_fd_into_poll(&mio::Poll::new().unwrap(), &tempfile().unwrap(), 42).unwrap();
         }
     }
 

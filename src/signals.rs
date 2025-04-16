@@ -59,8 +59,7 @@ mod tests {
             )
             .unwrap();
 
-            let result = process_signals(signals, child_guard.clone(), signal_tx);
-            assert!(result.is_ok());
+            process_signals(signals, child_guard.clone(), signal_tx).unwrap();
 
             let status = child_guard.lock().unwrap().child.wait().unwrap();
             assert!(!status.success());
@@ -90,8 +89,7 @@ mod tests {
 
             drop(signal_rx);
 
-            let result = process_signals(signals, child_guard.clone(), signal_tx);
-            assert!(result.is_ok());
+            process_signals(signals, child_guard.clone(), signal_tx).unwrap();
 
             let status = child_guard.lock().unwrap().child.wait().unwrap();
             assert!(!status.success());
