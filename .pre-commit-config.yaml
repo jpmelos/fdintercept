@@ -16,15 +16,11 @@ repos:
     hooks:
       - name: Format Rust files
         id: fmt
-      - name: Run cargo check
-        id: cargo-check
-      - name: Run cargo clippy
-        id: clippy
 
   - repo: https://github.com/hukkin/mdformat
     rev: 0.7.22
     hooks:
-      - name: Format markdown files
+      - name: Format Markdown files
         id: mdformat
         additional_dependencies:
           - mdformat-rustfmt
@@ -47,3 +43,28 @@ repos:
     hooks:
       - name: Format TOML files
         id: taplo-format
+
+  - repo: local
+    hooks:
+      - name: Run `cargo clippy`
+        id: clippy
+        description: Lint rust sources
+        entry: cargo
+        args:
+          - clippy
+          - --all-targets
+          - --all-features
+          - --
+          - -D
+          - warnings
+          - -D
+          - clippy::all
+          - -D
+          - clippy::pedantic
+          - -D
+          - clippy::nursery
+          - -D
+          - clippy::cargo
+        language: system
+        types: [rust]
+        pass_filenames: false
