@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     let mutex_child_guard = Arc::new(Mutex::new(child_guard));
     let mutex_child_guard_clone = mutex_child_guard.clone();
 
-    thread::scope(move |scope| {
+    thread::scope(move |scope| -> Result<()> {
         let (handle_tx, handle_rx) = mpsc::channel();
 
         threads::spawn_self_shipping_thread_in_scope(
@@ -76,7 +76,8 @@ fn main() -> Result<()> {
                     Some(signal_rx),
                 )
             },
-        );
+        )
+        .context("Failed to create thread to process stdin")?;
         threads::spawn_self_shipping_thread_in_scope(
             scope,
             handle_tx.clone(),
@@ -91,7 +92,8 @@ fn main() -> Result<()> {
                     None,
                 )
             },
-        );
+        )
+        .context("Failed to create thread to process stdout")?;
         threads::spawn_self_shipping_thread_in_scope(
             scope,
             handle_tx.clone(),
@@ -106,13 +108,15 @@ fn main() -> Result<()> {
                     None,
                 )
             },
-        );
+        )
+        .context("Failed to create thread to process stderr")?;
         threads::spawn_self_shipping_thread_in_scope(
             scope,
             handle_tx.clone(),
             "process_signals",
             || signals::process_signals(signals, mutex_child_guard_clone, signal_tx),
-        );
+        )
+        .context("Failed to create thread to process signals")?;
 
         // Close this `handle_tx` so that when all the self-shipping threads are finished and all
         // the `handle_tx` clones are dropped, `handle_rx` will return `Err`.
@@ -127,7 +131,10 @@ fn main() -> Result<()> {
                 Err(e) => eprintln!("Error joining thread: {e:?}"),
             }
         }
-    });
+
+        Ok(())
+    })
+    .context("Failed to create threads")?;
 
     std::process::exit(
         mutex_child_guard
