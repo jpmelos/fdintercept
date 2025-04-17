@@ -13,6 +13,15 @@ target command.
 - Preserves original program exit codes.
 - Handles process and child process termination gracefully.
 
+## Implementation Notes
+
+While Linux-specific optimizations like `splice()` were considered during
+development, fdintercept prioritizes cross-platform compatibility to support
+software engineers using both Linux and MacOS systems. For most development and
+debugging use cases, the performance difference would be negligible, as the
+tool is primarily meant for development and testing rather than production
+deployments where every microsecond counts.
+
 ## Installation
 
 Clone this repository and run:
