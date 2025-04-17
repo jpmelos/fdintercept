@@ -61,22 +61,22 @@ struct Config {
 }
 
 #[derive(Debug)]
-pub(crate) struct Target {
+pub struct Target {
     pub executable: NonEmptyString,
     pub args: Vec<String>,
 }
 
 #[derive(Debug)]
-pub(crate) struct ResolvedSettings {
-    pub(crate) stdin_log: Option<PathBuf>,
-    pub(crate) stdout_log: Option<PathBuf>,
-    pub(crate) stderr_log: Option<PathBuf>,
-    pub(crate) recreate_logs: bool,
-    pub(crate) buffer_size: usize,
-    pub(crate) target: Target,
+pub struct ResolvedSettings {
+    pub stdin_log: Option<PathBuf>,
+    pub stdout_log: Option<PathBuf>,
+    pub stderr_log: Option<PathBuf>,
+    pub recreate_logs: bool,
+    pub buffer_size: usize,
+    pub target: Target,
 }
 
-pub(crate) fn get_settings() -> Result<ResolvedSettings> {
+pub fn get_settings() -> Result<ResolvedSettings> {
     get_settings_with_raw_cli_args(std::env::args())
 }
 
@@ -222,9 +222,9 @@ fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
         }
         Err(std::env::VarError::NotPresent) => (),
         Err(e) => {
-            eprintln!("Error reading HOME environment variable: {}", e);
+            eprintln!("Error reading HOME environment variable: {e}");
         }
-    };
+    }
 
     match env::var("XDG_CONFIG_HOME") {
         Ok(xdg_config_home) => {
@@ -246,19 +246,18 @@ fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
         }
         Err(std::env::VarError::NotPresent) => (),
         Err(e) => {
-            eprintln!("Error reading XDG_CONFIG_HOME environment variable: {}", e);
+            eprintln!("Error reading XDG_CONFIG_HOME environment variable: {e}");
         }
-    };
+    }
 
     parse_config_contents("")
 }
 
-#[inline(always)]
 fn parse_config_contents(contents: &str) -> Result<Config> {
     toml::from_str(contents).context("Error parsing TOML configuration")
 }
 
-fn get_use_defaults(cli_args: &CliArgs, config: &Config) -> bool {
+const fn get_use_defaults(cli_args: &CliArgs, config: &Config) -> bool {
     cli_args.stdin_log.is_none()
         && cli_args.stdout_log.is_none()
         && cli_args.stderr_log.is_none()
@@ -291,8 +290,7 @@ fn get_log_name(
         LogFd::Stderr => &config.stderr_log,
     };
     match (cli_name, config_name) {
-        (Some(p), _) => Some(p.clone()),
-        (None, Some(p)) => Some(p.clone()),
+        (Some(p), _) | (None, Some(p)) => Some(p.clone()),
         (None, None) if use_default => Some(PathBuf::from(default_name)),
         _ => None,
     }
@@ -319,7 +317,7 @@ fn get_target(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> Result
         Ok(target) => return Ok(target),
         Err(CliArgsTargetParseError::NotDefined) => (),
         Err(e) => return Err(e).context("Error getting target from CLI arguments"),
-    };
+    }
 
     if let Some(ref target) = env_vars.target {
         match get_target_from_string(target) {

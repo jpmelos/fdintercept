@@ -1,2 +1,5 @@
 [env]
 RUST_TEST_THREADS = "1"
+
+[target.'cfg(all())']
+clippy = { all-targets = true, all-features = true }

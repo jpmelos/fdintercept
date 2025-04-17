@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::mpsc;
 use std::thread::{self, ScopedJoinHandle};
 
-pub(crate) fn spawn_self_shipping_thread_in_scope<'scope, F>(
+pub fn spawn_self_shipping_thread_in_scope<'scope, F>(
     scope: &'scope thread::Scope<'scope, '_>,
     tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
     thread_name: &'static str,

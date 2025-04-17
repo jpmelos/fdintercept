@@ -3,7 +3,7 @@ use nix::unistd::Pid;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::io::{ErrorKind, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -44,8 +44,12 @@ fn test_termination_by_signal() {
     let child_binary_dir = get_child_binary_dir();
     let mut fdintercept = run_main_process(&child_binary_dir);
     let mut stdout = fdintercept.stdout.take().unwrap();
-    stdout.read(&mut [0; 1]).unwrap();
-    signal::kill(Pid::from_raw(fdintercept.id() as i32), Signal::SIGTERM).unwrap();
+    stdout.read_exact(&mut [0; 1]).unwrap();
+    signal::kill(
+        Pid::from_raw(i32::try_from(fdintercept.id()).unwrap()),
+        Signal::SIGTERM,
+    )
+    .unwrap();
     let status = fdintercept.wait().unwrap();
 
     assert_eq!(status.code().unwrap(), 143); // 128 + SIGTERM (15)
@@ -259,7 +263,7 @@ fn get_child_binary_dir() -> PathBuf {
     out_dir
 }
 
-fn run_main_process(child_binary_dir: &PathBuf) -> Child {
+fn run_main_process(child_binary_dir: &Path) -> Child {
     Command::new("target/debug/fdintercept")
         .args([
             "--stdin-log",

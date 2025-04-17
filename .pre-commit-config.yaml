@@ -48,23 +48,8 @@ repos:
     hooks:
       - name: Run `cargo clippy`
         id: clippy
-        description: Lint rust sources
-        entry: cargo
-        args:
-          - clippy
-          - --all-targets
-          - --all-features
-          - --
-          - -D
-          - warnings
-          - -D
-          - clippy::all
-          - -D
-          - clippy::pedantic
-          - -D
-          - clippy::nursery
-          - -D
-          - clippy::cargo
+        description: Lint Rust sources.
+        entry: cargo clippy
         language: system
         types: [rust]
         pass_filenames: false

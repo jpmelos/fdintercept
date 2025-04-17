@@ -17,7 +17,7 @@ fn main() {
                 std::process::exit(42);
             }
             line => {
-                println!("Echo: {}", line);
+                println!("Echo: {line}");
             }
         }
     }
@@ -27,5 +27,6 @@ fn main() {
     // and exit with status code 0 before the runtime has time to terminate it with status code 143
     // (128 + 15 (SIGTERM))! So we enter an infinite loop here to prevent that: the child process
     // will wait here until the runtime comes and terminates it with status code 143.
+    #[allow(clippy::empty_loop)]
     loop {}
 }

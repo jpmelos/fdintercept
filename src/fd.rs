@@ -42,22 +42,21 @@ enum ProcessEventsForFdError {
 impl std::fmt::Display for ProcessEventsForFdError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Read(e) => write!(f, "Failed to read data: {}", e),
-            Self::Write(e) => write!(f, "Failed to write data: {}", e),
-            Self::Log(e) => write!(f, "Failed to log data: {}", e),
+            Self::Read(e) => write!(f, "Failed to read data: {e}"),
+            Self::Write(e) => write!(f, "Failed to write data: {e}"),
+            Self::Log(e) => write!(f, "Failed to log data: {e}"),
         }
     }
 }
 
 impl std::error::Error for ProcessEventsForFdError {}
 
-pub(crate) fn create_log_file(
-    maybe_path: &Option<PathBuf>,
+pub fn create_log_file(
+    maybe_path: Option<&PathBuf>,
     recreate_logs: bool,
 ) -> Result<Option<impl Write>> {
-    let path = match maybe_path {
-        Some(p) => p,
-        None => return Ok(None),
+    let Some(path) = maybe_path else {
+        return Ok(None);
     };
 
     if let Some(parent) = path.parent() {
@@ -80,7 +79,7 @@ pub(crate) fn create_log_file(
     ))?))
 }
 
-pub(crate) fn process_fd(
+pub fn process_fd(
     mut src_fd: impl Read + AsRawFd,
     mut dst_fd: impl Write,
     buffer_size: usize,
@@ -88,8 +87,8 @@ pub(crate) fn process_fd(
     log_descriptor: &'static str,
     maybe_signal_rx: Option<OwnedFd>,
 ) -> Result<()> {
-    let mut poll =
-        set_up_poll(&src_fd, &maybe_signal_rx, log_descriptor).context("Error setting up poll")?;
+    let mut poll = set_up_poll(&src_fd, maybe_signal_rx.as_ref(), log_descriptor)
+        .context("Error setting up poll")?;
 
     let mut pending_events = mio::Events::with_capacity(2);
     let mut buffer = vec![0; buffer_size];
@@ -117,19 +116,14 @@ pub(crate) fn process_fd(
 
         match event_outcomes.swap_remove(0) {
             Ok(ProcessEventsForFdSuccess::DataLogged) => (),
-            Ok(ProcessEventsForFdSuccess::Eof) => return Ok(()),
-            Ok(ProcessEventsForFdSuccess::Signal) => return Ok(()),
+            Ok(ProcessEventsForFdSuccess::Eof | ProcessEventsForFdSuccess::Signal) => return Ok(()),
             Err(ProcessEventsForFdError::Log(e)) => {
-                eprintln!(
-                    "Error writing to {} log, disabling logging: {}",
-                    log_descriptor, e
-                );
+                eprintln!("Error writing to {log_descriptor} log, disabling logging: {e}");
                 maybe_log.take();
             }
             Err(e) => {
                 return Err(e).context(format!(
-                    "Error processing event for stream {}",
-                    log_descriptor
+                    "Error processing event for stream {log_descriptor}"
                 ));
             }
         }
@@ -144,14 +138,13 @@ pub(crate) fn process_fd(
 
 fn set_up_poll(
     src_fd: &impl AsRawFd,
-    maybe_signal_rx: &Option<OwnedFd>,
+    maybe_signal_rx: Option<&OwnedFd>,
     log_descriptor: &str,
 ) -> Result<mio::Poll> {
     let poll = mio::Poll::new().context("Error creating poll of events")?;
 
     register_fd_into_poll(&poll, src_fd, SRC_TOKEN).context(format!(
-        "Error registering {} source stream in poll of events",
-        log_descriptor
+        "Error registering {log_descriptor} source stream in poll of events"
     ))?;
 
     if let Some(signal_rx) = maybe_signal_rx {
@@ -188,29 +181,21 @@ fn process_events_for_fd(
     buffer: &mut [u8],
     maybe_log: &mut Option<impl Write>,
 ) -> Vec<Result<ProcessEventsForFdSuccess, ProcessEventsForFdError>> {
-    if events.is_empty() {
-        // We process this as an event readable.
-        return vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)];
+    match events.len() {
+        0 => vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)],
+        1 => match events.first().unwrap() {
+            Event::FdReady => vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)],
+            Event::SignalReady => vec![Ok(ProcessEventsForFdSuccess::Signal)],
+        },
+        // There is a readable event for the fd, and a signal. We always want to process the
+        // readable event first so we don't miss anything that should be logged, and then the
+        // signal, which will kill the thread.
+        2 => vec![
+            inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log),
+            Ok(ProcessEventsForFdSuccess::Signal),
+        ],
+        _ => unreachable!("Poll can only return up to 2 events"),
     }
-
-    if events.len() == 1 {
-        match events[0] {
-            Event::FdReady => {
-                return vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)];
-            }
-            Event::SignalReady => {
-                return vec![Ok(ProcessEventsForFdSuccess::Signal)];
-            }
-        }
-    }
-
-    // There is a readable event for the fd, and a signal. We always want to process the readable
-    // event first so we don't miss anything that should be logged, and then the signal, which will
-    // kill the thread.
-    vec![
-        inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log),
-        Ok(ProcessEventsForFdSuccess::Signal),
-    ]
 }
 
 fn inner_fd_event_readable(
@@ -233,7 +218,7 @@ fn inner_fd_event_readable(
     };
 
     match dst_fd.write_all(&buffer[..bytes_read]) {
-        Ok(_) => (),
+        Ok(()) => (),
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
             return Ok(ProcessEventsForFdSuccess::Eof);
         }
@@ -322,16 +307,15 @@ mod tests {
 
         #[test]
         fn none() {
-            assert!(create_log_file(&None, false).unwrap().is_none());
+            assert!(create_log_file(None, false).unwrap().is_none());
         }
 
         #[test]
         fn new_file_with_parent_dirs() {
             let temp_dir = TempDir::new().unwrap();
             let log_path = temp_dir.path().join("nested/dirs/test.log");
-            let path = Some(log_path.clone());
 
-            let result = create_log_file(&path, false).unwrap();
+            let result = create_log_file(Some(&log_path), false).unwrap();
 
             assert!(result.is_some());
             assert!(log_path.exists());
@@ -341,11 +325,10 @@ mod tests {
         fn existing_file_appends() {
             let temp_dir = TempDir::new().unwrap();
             let log_path = temp_dir.path().join("test.log");
-            let path = Some(log_path.clone());
 
             fs::write(&log_path, "initial content").unwrap();
 
-            let mut file = create_log_file(&path, false).unwrap().unwrap();
+            let mut file = create_log_file(Some(&log_path), false).unwrap().unwrap();
             file.write_all(b"appended content").unwrap();
             drop(file);
 
@@ -357,11 +340,10 @@ mod tests {
         fn recreate() {
             let temp_dir = TempDir::new().unwrap();
             let log_path = temp_dir.path().join("test.log");
-            let path = Some(log_path.clone());
 
             fs::write(&log_path, "initial content").unwrap();
 
-            let mut file = create_log_file(&path, true).unwrap().unwrap();
+            let mut file = create_log_file(Some(&log_path), true).unwrap().unwrap();
             file.write_all(b"new content").unwrap();
             drop(file);
 
@@ -375,7 +357,7 @@ mod tests {
             fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o444)).unwrap();
             let log_path = temp_dir.path().join("test.log");
 
-            match create_log_file(&Some(log_path), false) {
+            match create_log_file(Some(&log_path), false) {
                 Ok(_) => panic!("Expected an error"),
                 Err(e) => assert!(e.to_string().contains("Failed to create/open log file")),
             }
@@ -451,14 +433,14 @@ mod tests {
         #[test]
         fn success_without_signal() {
             let file = create_file_from_pipe();
-            set_up_poll(&file, &None, "test").unwrap();
+            set_up_poll(&file, None, "test").unwrap();
         }
 
         #[test]
         fn success_with_signal() {
             let file = create_file_from_pipe();
             let (signal_rx, _signal_tx) = pipe().unwrap();
-            set_up_poll(&file, &Some(signal_rx), "test").unwrap();
+            set_up_poll(&file, Some(&signal_rx), "test").unwrap();
         }
 
         fn create_file_from_pipe() -> File {

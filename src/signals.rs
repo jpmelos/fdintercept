@@ -7,7 +7,7 @@ use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub(crate) fn process_signals(
+pub fn process_signals(
     mut signals: SignalsInfo,
     mutex_child_guard: Arc<Mutex<ChildGuard>>,
     signal_tx: OwnedFd,
@@ -54,7 +54,7 @@ mod tests {
 
             let signals = Signals::new([SIGTERM]).unwrap();
             nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(std::process::id() as i32),
+                nix::unistd::Pid::from_raw(i32::try_from(std::process::id()).unwrap()),
                 Signal::SIGTERM,
             )
             .unwrap();
@@ -67,7 +67,7 @@ mod tests {
 
             let mut buf = [0; 1];
             assert_eq!(
-                nix::unistd::read(signal_rx.as_raw_fd() as i32, &mut buf).unwrap(),
+                nix::unistd::read(signal_rx.as_raw_fd(), &mut buf).unwrap(),
                 1
             );
         }
@@ -82,7 +82,7 @@ mod tests {
 
             let signals = Signals::new([SIGTERM]).unwrap();
             nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(std::process::id() as i32),
+                nix::unistd::Pid::from_raw(i32::try_from(std::process::id()).unwrap()),
                 Signal::SIGTERM,
             )
             .unwrap();

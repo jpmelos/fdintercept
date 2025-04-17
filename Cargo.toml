@@ -4,6 +4,28 @@ version = "0.1.0"
 edition = "2024"
 description = "Intercepts and logs stdin, stdout, and stderr for any target command."
 authors = ["João Sampaio"]
+license = "MIT"
+repository = "https://github.com/jpmelos/fdintercept"
+keywords = ["cli", "io", "intercept", "logging", "stdio"]
+categories = [
+  "command-line-utilities",
+  "development-tools",
+  "development-tools::debugging",
+]
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+manual-string-new = "allow"
+option-if-let-else = "allow"
+too-many-lines = "allow"
+needless-pass-by-value = "allow"
+multiple-crate-versions = "allow"
 
 [dependencies]
 anyhow = "1.0.97"

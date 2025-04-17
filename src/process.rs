@@ -5,8 +5,8 @@ use std::process::{Child, ExitStatus};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
-pub(crate) struct ChildGuard {
-    pub(crate) child: Child,
+pub struct ChildGuard {
+    pub child: Child,
 }
 
 impl Drop for ChildGuard {
@@ -17,12 +17,12 @@ impl Drop for ChildGuard {
             Duration::from_secs(15),
             Duration::from_secs(5),
         ) {
-            eprintln!("Error cleaning up child process: {}", e);
+            eprintln!("Error cleaning up child process: {e}");
         }
     }
 }
 
-pub(crate) fn kill_child_process_with_grace_period(
+pub fn kill_child_process_with_grace_period(
     child: &mut Child,
     signal: Signal,
     grace_period: Duration,
@@ -35,7 +35,8 @@ pub(crate) fn kill_child_process_with_grace_period(
         return Ok(status);
     }
 
-    kill(Pid::from_raw(child.id() as i32), signal)
+    // unwrap: `child.id` is a PID, so it's guaranteed to be well in the range of `i32`.
+    kill(Pid::from_raw(i32::try_from(child.id()).unwrap()), signal)
         .context("Error sending signal to child process")?;
 
     if let Some(status) = child

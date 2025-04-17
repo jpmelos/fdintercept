@@ -22,9 +22,9 @@ fn main() -> Result<()> {
 
     let settings = settings::get_settings()?;
 
-    let stdin_log = fd::create_log_file(&settings.stdin_log, settings.recreate_logs)?;
-    let stdout_log = fd::create_log_file(&settings.stdout_log, settings.recreate_logs)?;
-    let stderr_log = fd::create_log_file(&settings.stderr_log, settings.recreate_logs)?;
+    let stdin_log = fd::create_log_file(settings.stdin_log.as_ref(), settings.recreate_logs)?;
+    let stdout_log = fd::create_log_file(settings.stdout_log.as_ref(), settings.recreate_logs)?;
+    let stderr_log = fd::create_log_file(settings.stderr_log.as_ref(), settings.recreate_logs)?;
 
     // Don't even start the child process if we were already told to terminate.
     if let Some(signum) = signals.pending().next() {
@@ -119,10 +119,10 @@ fn main() -> Result<()> {
         while let Ok((thread_name, handle)) = handle_rx.recv() {
             match handle.join() {
                 Ok(result) => match result {
-                    Ok(_) => (),
-                    Err(e) => eprintln!("Error in thread {}: {}", thread_name, e),
+                    Ok(()) => (),
+                    Err(e) => eprintln!("Error in thread {thread_name}: {e}"),
                 },
-                Err(e) => eprintln!("Error joining thread: {:?}", e),
+                Err(e) => eprintln!("Error joining thread: {e:?}"),
             }
         }
     });
