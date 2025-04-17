@@ -156,6 +156,41 @@ fn test_very_small_buffer_size() {
 }
 
 #[test]
+fn test_large_data_transfer() {
+    let child_binary_dir = get_child_binary_dir();
+    let mut fdintercept = run_main_process(&child_binary_dir);
+    let mut stdin = fdintercept.stdin.take().unwrap();
+    let mut stdout = fdintercept.stdout.take().unwrap();
+
+    let large_data = "0123456789\n".repeat(1_000_000) + "exit\n";
+
+    let stdout_thread = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0; 4096];
+        while let Ok(n) = stdout.read(&mut buffer) {
+            if n == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..n]);
+        }
+        output
+    });
+
+    for chunk in large_data.as_bytes().chunks(4096) {
+        stdin.write_all(chunk).unwrap();
+        stdin.flush().unwrap();
+    }
+
+    let output = stdout_thread.join().unwrap();
+
+    let expected_output = format!(
+        "Starting...\n{}",
+        format!("Echo: 0123456789\n").repeat(1_000_000)
+    );
+    assert_eq!(String::from_utf8(output).unwrap(), expected_output);
+}
+
+#[test]
 fn test_nonexistent_command() {
     let child_binary_dir = get_child_binary_dir();
     let result = Command::new("target/debug/fdintercept")
