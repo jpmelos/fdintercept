@@ -204,36 +204,37 @@ fn inner_fd_event_readable(
     buffer: &mut [u8],
     maybe_log: &mut Option<impl Write>,
 ) -> Result<ProcessEventsForFdSuccess, ProcessEventsForFdError> {
-    let bytes_read = match src_fd.read(buffer) {
-        Ok(0) => {
-            return Ok(ProcessEventsForFdSuccess::Eof);
-        }
-        Ok(bytes_read) => bytes_read,
-        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-            return Ok(ProcessEventsForFdSuccess::DataLogged);
-        }
-        Err(e) => {
-            return Err(ProcessEventsForFdError::Read(e));
-        }
-    };
+    // Keep reading from the source fd until we get a `WouldBlock`.
+    loop {
+        let bytes_read = match src_fd.read(buffer) {
+            Ok(0) => {
+                return Ok(ProcessEventsForFdSuccess::Eof);
+            }
+            Ok(bytes_read) => bytes_read,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                return Ok(ProcessEventsForFdSuccess::DataLogged);
+            }
+            Err(e) => {
+                return Err(ProcessEventsForFdError::Read(e));
+            }
+        };
 
-    match dst_fd.write_all(&buffer[..bytes_read]) {
-        Ok(()) => (),
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-            return Ok(ProcessEventsForFdSuccess::Eof);
+        match dst_fd.write_all(&buffer[..bytes_read]) {
+            Ok(()) => (),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                return Ok(ProcessEventsForFdSuccess::Eof);
+            }
+            Err(e) => {
+                return Err(ProcessEventsForFdError::Write(e));
+            }
         }
-        Err(e) => {
-            return Err(ProcessEventsForFdError::Write(e));
+
+        if let Some(log) = maybe_log {
+            if let Err(e) = log.write_all(&buffer[..bytes_read]) {
+                return Err(ProcessEventsForFdError::Log(e));
+            }
         }
     }
-
-    if let Some(log) = maybe_log {
-        if let Err(e) = log.write_all(&buffer[..bytes_read]) {
-            return Err(ProcessEventsForFdError::Log(e));
-        }
-    }
-
-    Ok(ProcessEventsForFdSuccess::DataLogged)
 }
 
 #[cfg(test)]
@@ -472,6 +473,7 @@ mod tests {
 
     mod process_events_for_fd {
         use super::*;
+        use std::io::{Error, ErrorKind};
 
         #[test]
         fn no_events() {
@@ -500,7 +502,7 @@ mod tests {
         #[test]
         fn single_event_fd_ready() {
             let mut src = MockRead {
-                responses: vec![Ok(5)],
+                responses: vec![Ok(5), Err(Error::new(ErrorKind::WouldBlock, "would block"))],
                 current: 0,
             };
             let mut dst = MockWrite {
@@ -548,7 +550,7 @@ mod tests {
         #[test]
         fn both_events_fd_first() {
             let mut src = MockRead {
-                responses: vec![Ok(5)],
+                responses: vec![Ok(5), Err(Error::new(ErrorKind::WouldBlock, "would block"))],
                 current: 0,
             };
             let mut dst = MockWrite {
@@ -575,7 +577,7 @@ mod tests {
         #[test]
         fn both_events_signal_first() {
             let mut src = MockRead {
-                responses: vec![Ok(5)],
+                responses: vec![Ok(5), Err(Error::new(ErrorKind::WouldBlock, "would block"))],
                 current: 0,
             };
             let mut dst = MockWrite {
@@ -607,7 +609,7 @@ mod tests {
         #[test]
         fn success_with_log() {
             let mut src = MockRead {
-                responses: vec![Ok(5)],
+                responses: vec![Ok(5), Err(Error::new(ErrorKind::WouldBlock, "would block"))],
                 current: 0,
             };
             let mut dst = MockWrite {
@@ -636,7 +638,7 @@ mod tests {
         #[test]
         fn success_without_log() {
             let mut src = MockRead {
-                responses: vec![Ok(5)],
+                responses: vec![Ok(5), Err(Error::new(ErrorKind::WouldBlock, "would block"))],
                 current: 0,
             };
             let mut dst = MockWrite {
@@ -674,27 +676,6 @@ mod tests {
             assert!(matches!(
                 inner_fd_event_readable(&mut src, &mut dst, &mut buffer, &mut log_file),
                 Ok(ProcessEventsForFdSuccess::Eof)
-            ));
-        }
-
-        #[test]
-        fn would_block_on_read() {
-            let mut src = MockRead {
-                responses: vec![Err(Error::new(ErrorKind::WouldBlock, "would block"))],
-                current: 0,
-            };
-            let mut dst = MockWrite {
-                responses: vec![],
-                current: 0,
-                written_data: vec![],
-            };
-
-            let mut buffer = vec![0; 1024];
-            let mut log_file: Option<MockWrite> = None;
-
-            assert!(matches!(
-                inner_fd_event_readable(&mut src, &mut dst, &mut buffer, &mut log_file),
-                Ok(ProcessEventsForFdSuccess::DataLogged)
             ));
         }
 
