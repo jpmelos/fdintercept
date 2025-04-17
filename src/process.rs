@@ -63,6 +63,8 @@ mod tests {
 
     mod child_guard_trait_drop {
         use super::*;
+        use nix::errno::Errno;
+        use nix::sys::signal;
 
         #[test]
         fn drop() {
@@ -74,16 +76,13 @@ mod tests {
             }
 
             thread::sleep(Duration::from_millis(100));
-            assert!(
-                Command::new("kill")
-                    .arg("-0")
-                    .arg(pid.to_string())
-                    .status()
-                    .unwrap()
-                    .code()
-                    .unwrap()
-                    != 0
+
+            let result = signal::kill(
+                Pid::from_raw(i32::try_from(pid).unwrap()),
+                None, // Signal 0 just tests process existence
             );
+
+            assert!(matches!(result, Err(Errno::ESRCH))); // ESRCH means "No such process"
         }
     }
 
