@@ -31,12 +31,12 @@ fn main() -> Result<()> {
         std::process::exit(128 + signum);
     }
 
-    // We're using a pipe here, instead of a mpsc::channel, because pipes have file
-    // descriptors that we can wait on with `poll`.
+    // We're using a pipe here, instead of a mpsc::channel, because pipes have file descriptors
+    // that we can wait on with `poll`.
     let (signal_rx, signal_tx) = pipe().context("Error creating pipe")?;
 
     let mut child_guard = ChildGuard {
-        child: Command::new(String::from(settings.target.executable))
+        child: Command::new(settings.target.executable.as_str())
             .args(&settings.target.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -114,6 +114,8 @@ fn main() -> Result<()> {
             || signals::process_signals(signals, mutex_child_guard_clone, signal_tx),
         );
 
+        // Close this `handle_tx` so that when all the self-shipping threads are finished and all
+        // the `handle_tx` clones are dropped, `handle_rx` will return `Err`.
         drop(handle_tx);
 
         while let Ok((thread_name, handle)) = handle_rx.recv() {

@@ -80,8 +80,8 @@ pub fn get_settings() -> Result<ResolvedSettings> {
     get_settings_with_raw_cli_args(std::env::args())
 }
 
-fn get_settings_with_raw_cli_args<A: IntoIterator<Item = String>>(
-    raw_cli_args: A,
+fn get_settings_with_raw_cli_args<RawCliArguments: IntoIterator<Item = String>>(
+    raw_cli_args: RawCliArguments,
 ) -> Result<ResolvedSettings> {
     let cli_args = CliArgs::parse_from(raw_cli_args);
     let env_vars = get_env_vars().context("Error reading environment variables")?;

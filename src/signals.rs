@@ -12,6 +12,8 @@ pub fn process_signals(
     mutex_child_guard: Arc<Mutex<ChildGuard>>,
     signal_tx: OwnedFd,
 ) -> Result<()> {
+    // If we got a SIGCHLD, there's no need to run `process::kill_child_process_with_grace_period`
+    // since the child process is already dead.
     // unwrap: Safe because `signals.forever()` is never empty.
     if let signum @ (SIGHUP | SIGINT | SIGTERM) = signals.forever().next().unwrap() {
         process::kill_child_process_with_grace_period(
@@ -26,7 +28,7 @@ pub fn process_signals(
         )?;
     }
     // We don't care about an error here, because either the receiving end is still waiting to get
-    // a message, or it has been already closed because the thread that owned it already died, and
+    // a message, or it has been already closed because the thread that owns it already died, and
     // then we don't care.
     let _ = nix::unistd::write(signal_tx, &[1]);
     Ok(())

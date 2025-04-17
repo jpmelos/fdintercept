@@ -114,8 +114,11 @@ pub fn process_fd(
             &mut maybe_log,
         );
 
-        match event_outcomes.swap_remove(0) {
+        match event_outcomes.remove(0) {
             Ok(ProcessEventsForFdSuccess::DataLogged) => (),
+            // If we got an EOF, this means that the stream is not open anymore and there will be
+            // no more data flowing. Just let the thread die. If we got a signal, this means we
+            // want to end the process.
             Ok(ProcessEventsForFdSuccess::Eof | ProcessEventsForFdSuccess::Signal) => return Ok(()),
             Err(ProcessEventsForFdError::Log(e)) => {
                 eprintln!("Error writing to {log_descriptor} log, disabling logging: {e}");
@@ -129,8 +132,8 @@ pub fn process_fd(
         }
 
         if event_outcomes.len() == 1 {
-            // There was a signal event, and we already processed the fd readable event
-            // that happened simultaneously. We can just return.
+            // There was a signal event, and we already processed the fd readable event that
+            // happened simultaneously. We can just return.
             return Ok(());
         }
     }
@@ -158,6 +161,7 @@ fn set_up_poll(
 fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> Result<()> {
     let raw_fd = fd.as_raw_fd();
 
+    // All file descriptors that are used with Mio should be in non-blocking mode.
     let flags = fcntl::fcntl(raw_fd, fcntl::F_GETFL).context("Error getting flags")?;
     fcntl::fcntl(
         raw_fd,
@@ -183,6 +187,7 @@ fn process_events_for_fd(
 ) -> Vec<Result<ProcessEventsForFdSuccess, ProcessEventsForFdError>> {
     match events.len() {
         0 => vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)],
+        // unwrap: Safe because we just checked whether `events.len()` is zero in the arm above.
         1 => match events.first().unwrap() {
             Event::FdReady => vec![inner_fd_event_readable(src_fd, dst_fd, buffer, maybe_log)],
             Event::SignalReady => vec![Ok(ProcessEventsForFdSuccess::Signal)],
