@@ -44,9 +44,15 @@ repos:
       - name: Format TOML files
         id: taplo-format
 
+  - repo: https://github.com/EmbarkStudios/cargo-deny
+    rev: 0.18.2
+    hooks:
+      - name: Check Cargo dependencies with `cargo deny`
+        id: cargo-deny
+
   - repo: local
     hooks:
-      - name: Run `cargo clippy`
+      - name: Lint Rust code with `cargo clippy`
         id: clippy
         description: Lint Rust sources.
         entry: cargo clippy
