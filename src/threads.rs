@@ -1,7 +1,39 @@
+//! Thread management utilities for self-reporting thread handles.
+//!
+//! This module provides functionality for spawning threads that can report their own handles back
+//! to the parent thread, enabling better control and monitoring of thread lifecycle.
+
 use anyhow::{Context, Result};
 use std::sync::mpsc;
 use std::thread::{self, ScopedJoinHandle};
 
+/// Spawns a thread that sends its own handle back through a channel.
+///
+/// This function creates a scoped thread that executes the provided function and sends its own
+/// handle back through a channel, allowing the parent thread to track and manage it. The thread is
+/// created within the provided scope, ensuring it doesn't outlive its parent thread.
+///
+/// # Arguments
+///
+/// * `scope` - The thread scope in which the new thread will be created.
+/// * `tx` - Channel sender for reporting the thread handle and name back to the parent.
+/// * `thread_name` - Static string identifier for the thread.
+/// * `func` - The function to be executed in the new thread.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the thread was successfully spawned, or an error if thread creation failed.
+///
+/// # Type Parameters
+///
+/// * `'scope` - Lifetime of the thread scope.
+/// * `F` - Type of the function to be executed in the thread.
+///
+/// # Generic Constraints
+///
+/// * `F: FnOnce() -> Result<()>` - The function must take no arguments and return a Result.
+/// * `F: Send` - The function must be safe to send between threads.
+/// * `F: 'scope` - The function must live at least as long as the scope.
 pub fn spawn_self_shipping_thread_in_scope<'scope, F>(
     scope: &'scope thread::Scope<'scope, '_>,
     tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,

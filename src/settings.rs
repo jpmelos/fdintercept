@@ -1,3 +1,16 @@
+//! Configuration and settings management for fdintercept.
+//!
+//! This module handles the configuration hierarchy from multiple sources:
+//! 1. Command-line arguments,
+//! 2. Environment variables,
+//! 3. Configuration files (in order):
+//!    - Custom path specified via CLI or `FDINTERCEPTRC`,
+//!    - `~/.fdinterceptrc.toml`, and
+//!    - `$XDG_CONFIG_HOME/fdintercept/rc.toml`.
+//!
+//! Settings are resolved with CLI arguments taking precedence over environment variables, which
+//! take precedence over configuration files.
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use non_empty_string::NonEmptyString;
@@ -6,6 +19,7 @@ use serde::Deserialize;
 use std::env::{self};
 use std::path::PathBuf;
 
+/// Command-line arguments parser.
 #[derive(Parser, Default)]
 #[command(about, version)]
 struct CliArgs {
@@ -42,44 +56,114 @@ struct CliArgs {
     target: Vec<String>,
 }
 
+/// Environment variables configuration container.
 #[derive(Default, Debug)]
 struct EnvVars {
+    /// Path to configuration file (`FDINTERCEPTRC`).
     conf: Option<PathBuf>,
+    /// Whether to recreate log files (`FDINTERCEPT_RECREATE_LOGS`).
     recreate_logs: Option<bool>,
+    /// Buffer size for I/O operations (`FDINTERCEPT_BUFFER_SIZE`).
     buffer_size: Option<usize>,
+    /// Target command to execute (`FDINTERCEPT_TARGET`).
     target: Option<String>,
 }
 
+/// Configuration file structure.
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
 struct Config {
+    /// Path to stdin log file.
     stdin_log: Option<PathBuf>,
+    /// Path to stdout log file.
     stdout_log: Option<PathBuf>,
+    /// Path to stderr log file.
     stderr_log: Option<PathBuf>,
+    /// Whether to recreate log files.
     recreate_logs: Option<bool>,
+    /// Buffer size for I/O operations.
     buffer_size: Option<usize>,
+    /// Target command to execute.
     target: Option<String>,
 }
 
+/// Target command specification.
 #[derive(Debug)]
 pub struct Target {
+    /// The executable to run.
     pub executable: NonEmptyString,
+    /// Arguments to pass to the executable.
     pub args: Vec<String>,
 }
 
+/// Resolved settings after merging all configuration sources.
 #[derive(Debug)]
 pub struct ResolvedSettings {
+    /// Path to stdin log file, if enabled.
     pub stdin_log: Option<PathBuf>,
+    /// Path to stdout log file, if enabled.
     pub stdout_log: Option<PathBuf>,
+    /// Path to stderr log file, if enabled.
     pub stderr_log: Option<PathBuf>,
+    /// Whether to recreate log files.
     pub recreate_logs: bool,
+    /// Buffer size for I/O operations.
     pub buffer_size: usize,
+    /// Target command specification.
     pub target: Target,
 }
 
+/// Gets the resolved settings using command line arguments from the current process.
+///
+/// This function serves as a convenient wrapper around [`get_settings_with_raw_cli_args`],
+/// automatically passing the current process's command line arguments via [`std::env::args`].
+///
+/// # Returns
+///
+/// Returns a [`Result`] containing [`ResolvedSettings`] if successful, or an error if:
+/// - Command line arguments cannot be parsed,
+/// - Environment variables are invalid or cannot be read,
+/// - Configuration files are malformed or cannot be accessed, or
+/// - The target command specification is invalid.
 pub fn get_settings() -> Result<ResolvedSettings> {
     get_settings_with_raw_cli_args(std::env::args())
 }
 
+/// Resolves settings by processing command line arguments, environment variables, and
+/// configuration files.
+///
+/// This function implements the core settings resolution logic, following a strict precedence
+/// order:
+/// 1. Command line arguments (highest priority),
+/// 2. Environment variables, and then
+/// 3. Configuration files (lowest priority).
+///
+/// # Type Parameters
+///
+/// * `RawCliArguments` - Any type that can be converted into an iterator of `String`s.
+///
+/// # Arguments
+///
+/// * `raw_cli_args` - Raw command line arguments that will be parsed into structured settings.
+///
+/// # Returns
+///
+/// Returns a `Result<ResolvedSettings>` which contains all resolved settings if successful.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// * Command line arguments cannot be parsed,
+/// * Environment variables are invalid or inaccessible,
+/// * Configuration files are malformed or cannot be read, or
+/// * The target command specification is missing or invalid.
+///
+/// # Resolution Process
+///
+/// 1. Parses command line arguments into `CliArgs`,
+/// 2. Reads and validates environment variables,
+/// 3. Loads and parses configuration files,
+/// 4. Determines if default log files should be used, and
+/// 5. Combines all sources to create final settings.
 fn get_settings_with_raw_cli_args<RawCliArguments: IntoIterator<Item = String>>(
     raw_cli_args: RawCliArguments,
 ) -> Result<ResolvedSettings> {
@@ -111,6 +195,7 @@ fn get_settings_with_raw_cli_args<RawCliArguments: IntoIterator<Item = String>>(
     })
 }
 
+/// Reads and parses environment variables into configuration structure.
 fn get_env_vars() -> Result<EnvVars> {
     Ok(EnvVars {
         conf: {
@@ -185,6 +270,32 @@ fn get_env_vars() -> Result<EnvVars> {
     })
 }
 
+/// Reads and parses environment variables into a configuration structure.
+///
+/// This function attempts to read and parse the following environment variables:
+/// - `FDINTERCEPTRC`: Path to a configuration file.
+/// - `FDINTERCEPT_RECREATE_LOGS`: Boolean flag for recreating log files.
+/// - `FDINTERCEPT_BUFFER_SIZE`: Numeric value for I/O buffer size.
+/// - `FDINTERCEPT_TARGET`: Command string to execute.
+///
+/// # Returns
+///
+/// Returns a `Result<EnvVars>` containing the parsed environment variables if successful.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - `FDINTERCEPTRC` is defined but empty,
+/// - `FDINTERCEPT_RECREATE_LOGS` contains an invalid boolean value,
+/// - `FDINTERCEPT_BUFFER_SIZE` contains an invalid numeric value, or
+/// - Any environment variable exists but cannot be read due to invalid Unicode.
+///
+/// # Environment Variables
+///
+/// - `FDINTERCEPTRC`: Optional path to configuration file.
+/// - `FDINTERCEPT_RECREATE_LOGS`: Optional boolean ("true"/"false") for log file handling.
+/// - `FDINTERCEPT_BUFFER_SIZE`: Optional positive integer for buffer size.
+/// - `FDINTERCEPT_TARGET`: Optional command string to execute.
 fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
     if let Some(ref path) = cli_args.conf {
         return std::fs::read_to_string(path)
@@ -253,10 +364,47 @@ fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
     parse_config_contents("")
 }
 
+/// Parses a TOML-formatted string into a configuration structure.
+///
+/// This function attempts to parse the provided string contents as TOML and convert it into a
+/// [`Config`] structure. Empty input is valid and will result in a default configuration.
+///
+/// # Arguments
+///
+/// * `contents` - A string slice containing TOML-formatted configuration data.
+///
+/// # Returns
+///
+/// Returns a `Result<Config>` which is:
+/// - `Ok(Config)` containing the parsed configuration if successful, or
+/// - `Err` if the TOML parsing fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The TOML syntax is invalid,
+/// - The TOML structure doesn't match the expected [`Config`] structure, or
+/// - Field types in the TOML don't match the expected types in [`Config`].
 fn parse_config_contents(contents: &str) -> Result<Config> {
     toml::from_str(contents).context("Error parsing TOML configuration")
 }
 
+/// Determines whether default log files should be used based on CLI arguments and configuration.
+///
+/// This function checks if any log file paths have been explicitly specified either through
+/// command-line arguments or in the configuration file. If no log files are specified in either
+/// source, it returns `true` indicating that default log files should be used.
+///
+/// # Arguments
+///
+/// * `cli_args` - Reference to the parsed command-line arguments.
+/// * `config` - Reference to the parsed configuration.
+///
+/// # Returns
+///
+/// Returns `true` if no log files are specified in either CLI arguments or configuration,
+/// indicating that default log files should be used. Returns `false` if any log file path is
+/// explicitly specified.
 const fn get_use_defaults(cli_args: &CliArgs, config: &Config) -> bool {
     cli_args.stdin_log.is_none()
         && cli_args.stdout_log.is_none()
@@ -266,12 +414,38 @@ const fn get_use_defaults(cli_args: &CliArgs, config: &Config) -> bool {
         && config.stderr_log.is_none()
 }
 
+/// Represents the different types of file descriptors that can be logged.
 enum LogFd {
+    /// Standard input.
     Stdin,
+    /// Standard output.
     Stdout,
+    /// Standard error.
     Stderr,
 }
 
+/// Determines the log filename for a specific file descriptor type based on configuration
+/// precedence.
+///
+/// This function resolves the appropriate log filename by checking multiple sources in order:
+/// 1. Command-line arguments,
+/// 2. Configuration file, or
+/// 3. Default filename (if enabled).
+///
+/// # Arguments
+///
+/// * `log_fd` - The file descriptor type ([`LogFd`]) to get the log name for.
+/// * `cli_args` - Reference to the parsed command-line arguments.
+/// * `config` - Reference to the parsed configuration.
+/// * `use_default` - Whether to use default filenames when no explicit path is specified.
+/// * `default_name` - The default filename to use when no explicit path is specified and defaults
+///   are enabled.
+///
+/// # Returns
+///
+/// Returns an `Option<PathBuf>` which is:
+/// - `Some(PathBuf)` containing the resolved log file path if one should be used, or
+/// - `None` if logging should be disabled for this file descriptor.
 fn get_log_name(
     log_fd: LogFd,
     cli_args: &CliArgs,
@@ -296,6 +470,24 @@ fn get_log_name(
     }
 }
 
+/// Determines whether to recreate log files based on configuration precedence.
+///
+/// This function checks multiple configuration sources in the following order:
+/// 1. Command-line arguments (`--recreate-logs` flag),
+/// 2. Environment variables (`FDINTERCEPT_RECREATE_LOGS`), or
+/// 3. Configuration file (`recreate_logs` field).
+///
+/// If none of these sources specify the setting, it defaults to `false`.
+///
+/// # Arguments
+///
+/// * `cli_args` - Reference to the parsed command-line arguments.
+/// * `env_vars` - Reference to the parsed environment variables.
+/// * `config` - Reference to the parsed configuration file settings.
+///
+/// # Returns
+///
+/// Returns a boolean indicating whether log files should be recreated.
 fn get_recreate_logs(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> bool {
     cli_args.recreate_logs
         || env_vars
@@ -304,6 +496,25 @@ fn get_recreate_logs(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) ->
             .unwrap_or(false)
 }
 
+/// Determines the I/O buffer size based on configuration precedence.
+///
+/// This function checks multiple configuration sources in the following order:
+/// 1. Command-line arguments (`--buffer-size` option),
+/// 2. Environment variables (`FDINTERCEPT_BUFFER_SIZE`), or
+/// 3. Configuration file (`buffer_size` field).
+///
+/// If none of these sources specify the setting, it defaults to 8192 bytes (8 KiB).
+///
+/// # Arguments
+///
+/// * `cli_args` - Reference to the parsed command-line arguments.
+/// * `env_vars` - Reference to the parsed environment variables.
+/// * `config` - Reference to the parsed configuration file settings.
+///
+/// # Returns
+///
+/// Returns a `usize` representing the buffer size in bytes to use for I/O operations. The
+/// precedence order is CLI args > environment vars > config file > default value (8,192).
 fn get_buffer_size(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> usize {
     cli_args
         .buffer_size
@@ -312,6 +523,35 @@ fn get_buffer_size(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> u
         .unwrap_or(8192)
 }
 
+/// Retrieves the target command to execute based on configuration precedence.
+///
+/// This function checks multiple configuration sources in the following order:
+/// 1. Command-line arguments (after `--`),
+/// 2. Environment variables (`FDINTERCEPT_TARGET`), or
+/// 3. Configuration file (`target` field).
+///
+/// The target command consists of an executable name and optional arguments.
+///
+/// # Arguments
+///
+/// * `cli_args` - Reference to the parsed command-line arguments.
+/// * `env_vars` - Reference to the parsed environment variables.
+/// * `config` - Reference to the parsed configuration file settings.
+///
+/// # Returns
+///
+/// Returns a `Result<Target>` which is:
+/// - `Ok(Target)` containing the parsed target command if successful, or
+/// - `Err` if no valid target is found or if parsing fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - No target is defined in any configuration source,
+/// - The target executable name is empty,
+/// - The target string cannot be properly tokenized (for environment variables and config file),
+///   or
+/// - Any parsing error occurs while processing the target.
 fn get_target(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> Result<Target> {
     match get_target_from_cli_arg(&cli_args.target) {
         Ok(target) => return Ok(target),
@@ -342,9 +582,12 @@ fn get_target(cli_args: &CliArgs, env_vars: &EnvVars, config: &Config) -> Result
     ))
 }
 
+/// Errors that can occur when parsing target from CLI arguments.
 #[derive(Debug)]
 enum CliArgsTargetParseError {
+    /// No target was provided
     NotDefined,
+    /// The executable name was empty
     EmptyExecutable,
 }
 
@@ -359,6 +602,28 @@ impl std::fmt::Display for CliArgsTargetParseError {
 
 impl std::error::Error for CliArgsTargetParseError {}
 
+/// Parses a target command from CLI arguments.
+///
+/// Takes a slice of strings representing command-line arguments and attempts to parse them into a
+/// target command structure. The first argument becomes the executable name, and any remaining
+/// arguments are stored as the command arguments.
+///
+/// # Arguments
+///
+/// * `cli_arg` - A slice of strings containing the command and its arguments. Must not be empty
+///   and the first argument (executable) must not be empty.
+///
+/// # Returns
+///
+/// Returns a `Result<Target, CliArgsTargetParseError>` which is:
+/// - `Ok(Target)` containing the parsed executable name and arguments if successful, or
+/// - `Err(CliArgsTargetParseError)` if parsing fails.
+///
+/// # Errors
+///
+/// Returns `CliArgsTargetParseError`:
+/// - `NotDefined` if the input slice is empty, or
+/// - `EmptyExecutable` if the first argument (executable name) is empty.
 fn get_target_from_cli_arg(cli_arg: &[String]) -> Result<Target, CliArgsTargetParseError> {
     let target_vec = NonEmpty::from_slice(cli_arg).ok_or(CliArgsTargetParseError::NotDefined)?;
     Ok(Target {
@@ -368,10 +633,14 @@ fn get_target_from_cli_arg(cli_arg: &[String]) -> Result<Target, CliArgsTargetPa
     })
 }
 
+/// Errors that can occur when parsing target from a string.
 #[derive(Debug)]
 enum StringTargetParseError {
+    /// The target string was empty.
     Empty,
+    /// Failed to tokenize the target string.
     FailedToTokenize,
+    /// The executable name was empty.
     EmptyExecutable,
 }
 
@@ -387,6 +656,29 @@ impl std::fmt::Display for StringTargetParseError {
 
 impl std::error::Error for StringTargetParseError {}
 
+/// Parses a target command from a string.
+///
+/// Takes a string containing a shell-style command and parses it into a target command structure.
+/// The string is tokenized using shell-like rules (handling quotes and escapes), with the first
+/// token becoming the executable name and the remaining tokens becoming the command arguments.
+///
+/// # Arguments
+///
+/// * `target` - A string containing the command to parse. Must not be empty and must contain a
+///   valid executable name as its first token.
+///
+/// # Returns
+///
+/// Returns a `Result<Target, StringTargetParseError>` which is:
+/// - `Ok(Target)` containing the parsed executable name and arguments if successful, or
+/// - `Err(StringTargetParseError)` if parsing fails.
+///
+/// # Errors
+///
+/// Returns `StringTargetParseError`:
+/// - `Empty` if the input string is empty,
+/// - `FailedToTokenize` if the string cannot be properly tokenized (e.g., unmatched quotes), or
+/// - `EmptyExecutable` if the first token (executable name) is empty.
 fn get_target_from_string(target: &str) -> Result<Target, StringTargetParseError> {
     if target.is_empty() {
         return Err(StringTargetParseError::Empty);

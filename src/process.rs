@@ -1,3 +1,9 @@
+//! Process management and graceful termination utilities.
+//!
+//! This module provides functionality for managing child processes, including:
+//! - Automatic cleanup of child processes using RAII, and
+//! - Graceful process termination with configurable timeouts.
+
 use anyhow::{Context, Result};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
@@ -5,7 +11,13 @@ use std::process::{Child, ExitStatus};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
+/// A guard that ensures child processes are properly terminated when dropped.
+///
+/// This struct implements the RAII pattern to guarantee that child processes are terminated
+/// gracefully when they go out of scope. It first attempts to terminate the process with SIGTERM
+/// and a grace period, followed by SIGKILL if necessary.
 pub struct ChildGuard {
+    /// The child process being guarded.
     pub child: Child,
 }
 
@@ -22,6 +34,30 @@ impl Drop for ChildGuard {
     }
 }
 
+/// Attempts to terminate a child process gracefully with configurable timeouts.
+///
+/// This function follows a multi-step termination process:
+/// 1. Checks if the process has already terminated,
+/// 2. Sends the specified signal and waits for the grace period, and
+/// 3. If the process is still alive, sends SIGKILL and waits for the kill deadline.
+///
+/// # Arguments
+///
+/// * `child` - The child process to terminate.
+/// * `signal` - The initial signal to send (typically SIGTERM).
+/// * `grace_period` - How long to wait after sending the initial signal.
+/// * `kill_deadline` - How long to wait after sending SIGKILL.
+///
+/// # Returns
+///
+/// Returns the exit status of the terminated process.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Failed to wait for or check process status,
+/// - Failed to send signals to the process, or
+/// - Process remains alive after SIGKILL and kill deadline.
 pub fn kill_child_process_with_grace_period(
     child: &mut Child,
     signal: Signal,

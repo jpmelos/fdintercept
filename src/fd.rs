@@ -1,3 +1,10 @@
+//! File descriptor handling and event processing functionality.
+//!
+//! This module provides utilities for managing file descriptors, including:
+//! - Creating log files with specific permissions and modes,
+//! - Processing file descriptor events in a non-blocking manner, and
+//! - Handling signals and data transfer between file descriptors.
+
 use anyhow::{Context, Result};
 use nix::fcntl::{self, OFlag};
 use std::fs::OpenOptions;
@@ -7,16 +14,30 @@ use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
-// These are Mio poll tokens.
+/// Mio token that represents that the source file descriptor is ready to be read.
 const SRC_TOKEN: usize = 0;
+/// Mio token that represents that a signal has arrived.
 const SIGNAL_TOKEN: usize = 1;
 
+/// Represents different types of events that can occur during file descriptor polling.
+#[derive(Debug)]
 enum Event {
+    /// Indicates that data is ready to be read from the file descriptor.
     FdReady,
+    /// Indicates that a signal has been received.
     SignalReady,
 }
 
 impl Event {
+    /// Converts a Mio token into the corresponding Event variant.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The Mio token to convert.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the token value is neither `SRC_TOKEN` nor `SIGNAL_TOKEN`.
     fn from_mio_token(token: mio::Token) -> Self {
         match token.0 {
             SRC_TOKEN => Self::FdReady,
@@ -26,16 +47,25 @@ impl Event {
     }
 }
 
+/// Represents successful outcomes of processing file descriptor events.
+#[derive(Debug)]
 enum ProcessEventsForFdSuccess {
+    /// Data was successfully read and written
     DataLogged,
+    /// End of file was reached
     Eof,
+    /// A signal was received
     Signal,
 }
 
+/// Represents errors that can occur during file descriptor event processing.
 #[derive(Debug)]
 enum ProcessEventsForFdError {
+    /// Error occurred while reading from the source.
     Read(std::io::Error),
+    /// Error occurred while writing to the destination.
     Write(std::io::Error),
+    /// Error occurred while writing to the log file.
     Log(std::io::Error),
 }
 
@@ -51,6 +81,24 @@ impl std::fmt::Display for ProcessEventsForFdError {
 
 impl std::error::Error for ProcessEventsForFdError {}
 
+/// Creates a log file with specified options.
+///
+/// # Arguments
+///
+/// * `maybe_path` - Optional path where the log file should be created.
+/// * `recreate_logs` - If true, truncates existing log file; if false, appends to it.
+///
+/// # Returns
+///
+/// Returns `Ok(Some(impl Write))` if a path was provided and the file was successfully created, or
+/// `Ok(None)` if no path was provided.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Failed to create parent directories,
+/// - Failed to create or open the log file, or
+/// - Insufficient permissions.
 pub fn create_log_file(
     maybe_path: Option<&PathBuf>,
     recreate_logs: bool,
@@ -79,6 +127,27 @@ pub fn create_log_file(
     ))?))
 }
 
+/// Processes a file descriptor, handling data transfer and optional logging.
+///
+/// # Arguments
+///
+/// * `src_fd` - Source file descriptor implementing `Read + AsRawFd`.
+/// * `dst_fd` - Destination file descriptor implementing `Write`.
+/// * `buffer_size` - Size of the buffer in bytes used for data transfer.
+/// * `maybe_log` - Optional writer for logging the transferred data.
+/// * `log_descriptor` - Static string describing the log for error messages.
+/// * `maybe_signal_rx` - Optional owned file descriptor for signal handling.
+///
+/// # Returns
+///
+/// Returns `Ok(())` when processing completes successfully, either due to EOF or signal.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Failed to set up polling,
+/// - Error occurred during polling, or
+/// - Error processing events (except for log write errors, which disable logging).
 pub fn process_fd(
     mut src_fd: impl Read + AsRawFd,
     mut dst_fd: impl Write,
@@ -139,6 +208,23 @@ pub fn process_fd(
     }
 }
 
+/// Sets up a poll instance for monitoring file descriptors.
+///
+/// # Arguments
+///
+/// * `src_fd` - Source file descriptor to monitor.
+/// * `maybe_signal_rx` - Optional signal receiver file descriptor.
+/// * `log_descriptor` - Description string for error messages.
+///
+/// # Returns
+///
+/// Returns the configured poll instance on success.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Failed to create new poll instance, or
+/// - Failed to register file descriptors.
 fn set_up_poll(
     src_fd: &impl AsRawFd,
     maybe_signal_rx: Option<&OwnedFd>,
@@ -158,6 +244,23 @@ fn set_up_poll(
     Ok(poll)
 }
 
+/// Registers a file descriptor with a poll instance.
+///
+/// # Arguments
+///
+/// * `poll` - The poll instance to register with.
+/// * `fd` - The file descriptor to register.
+/// * `token` - The token to associate with this file descriptor.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on successful registration.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Failed to get or set file descriptor flags, or
+/// - Failed to register with poll instance.
 fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> Result<()> {
     let raw_fd = fd.as_raw_fd();
 
@@ -178,6 +281,19 @@ fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> R
     Ok(())
 }
 
+/// Processes events for a file descriptor.
+///
+/// # Arguments
+///
+/// * `events` - Vector of events to process.
+/// * `src_fd` - Source to read from.
+/// * `dst_fd` - Destination to write to.
+/// * `buffer` - Buffer for data transfer.
+/// * `maybe_log` - Optional log writer.
+///
+/// # Returns
+///
+/// Returns a vector of results, one for each processed event.
 fn process_events_for_fd(
     events: Vec<Event>,
     src_fd: &mut impl Read,
@@ -203,6 +319,18 @@ fn process_events_for_fd(
     }
 }
 
+/// Handles a readable event for a file descriptor.
+///
+/// # Arguments
+///
+/// * `src_fd` - Source to read from.
+/// * `dst_fd` - Destination to write to.
+/// * `buffer` - Buffer for data transfer.
+/// * `maybe_log` - Optional log writer.
+///
+/// # Returns
+///
+/// Returns the result of processing the readable event.
 fn inner_fd_event_readable(
     src_fd: &mut impl Read,
     dst_fd: &mut impl Write,

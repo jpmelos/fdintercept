@@ -1,3 +1,8 @@
+//! Signal handling functionality for managing child process termination.
+//!
+//! This module provides functionality for handling Unix signals (`SIGHUP`, `SIGINT`, `SIGTERM`) and
+//! gracefully terminating child processes when these signals are received.
+
 use crate::process::{self, ChildGuard};
 use anyhow::Result;
 use nix::sys::signal::Signal;
@@ -7,6 +12,33 @@ use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Processes incoming Unix signals and handles child process termination.
+///
+/// This function waits for signals (`SIGHUP`, `SIGINT`, or `SIGTERM`) and attempts to gracefully
+/// terminate the child process when one is received. After signal processing, it notifies the main
+/// thread through a file descriptor.
+///
+/// # Arguments
+///
+/// * `signals` - Signal iterator providing incoming Unix signals.
+/// * `mutex_child_guard` - Thread-safe reference to the child process guard.
+/// * `signal_tx` - File descriptor for notifying the main thread of signal processing completion.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if signal processing and child termination are successful, or an error if the
+/// child process cannot be terminated properly.
+///
+/// # Signal Handling
+///
+/// The function handles these signals:
+/// - `SIGHUP`: Terminal disconnect.
+/// - `SIGINT`: Interrupt (usually Ctrl+C).
+/// - `SIGTERM`: Termination request.
+///
+/// When any of these signals are received, the function:
+/// 1. Attempts to gracefully terminate the child process, and
+/// 2. Notifies the main thread through the `signal_tx` file descriptor.
 pub fn process_signals(
     mut signals: SignalsInfo,
     mutex_child_guard: Arc<Mutex<ChildGuard>>,

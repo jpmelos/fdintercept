@@ -1,7 +1,27 @@
+//! A utility program that intercepts and logs stdin, stdout, and stderr for any target command.
+//!
+//! This program wraps any command and captures all I/O via stdin, stdout, and stderr, logging each
+//! stream to separate files. It supports configuration via CLI, environment variables, or a
+//! configuration file, and handles process termination gracefully.
+//!
+//! # Features
+//!
+//! - Wraps any command and captures all I/O via stdin, stdout, and stderr.
+//! - Logs each stream to separate files.
+//! - Supports configuration via CLI, environment variables, or configuration file.
+//! - Configurable buffer size for I/O operations.
+//! - Preserves original program exit codes.
+//! - Handles process and child process termination gracefully.
+
+/// Module for file descriptor handling and I/O processing
 mod fd;
+/// Module for child process management
 mod process;
+/// Module for configuration and settings management
 mod settings;
+/// Module for Unix signal handling
 mod signals;
+/// Module for thread management utilities
 mod threads;
 
 use anyhow::{Context, Result};
@@ -16,6 +36,34 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+/// Main entry point for the fdintercept program.
+///
+/// This function:
+/// 1. Sets up signal handlers for graceful termination.
+/// 2. Loads program settings from various sources.
+/// 3. Creates log files for stdin, stdout, and stderr.
+/// 4. Spawns the target process with piped I/O.
+/// 5. Creates threads to handle I/O processing and signal handling.
+/// 6. Manages thread lifecycle and cleanup.
+/// 7. Preserves the exit code from the child process.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the program runs successfully, or an error if any critical operation fails.
+///
+/// # Exit Codes
+///
+/// - Returns the exit code of the child process if it exits normally,
+/// - Returns 128 + signal number if the child process is terminated by a signal, or
+/// - Returns 1 if the child process status cannot be determined.
+///
+/// # Signal Handling
+///
+/// Handles the following signals:
+/// - SIGHUP: Terminal disconnect.
+/// - SIGINT: Interrupt (usually Ctrl+C).
+/// - SIGTERM: Termination request.
+/// - SIGCHLD: Child process status change.
 fn main() -> Result<()> {
     let mut signals = Signals::new([SIGHUP, SIGINT, SIGTERM, SIGCHLD])
         .context("Failed to register signal handlers")?;
