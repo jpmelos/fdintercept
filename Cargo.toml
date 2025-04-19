@@ -3,8 +3,9 @@ name = "fdintercept"
 version = "0.1.0"
 edition = "2024"
 description = "Intercepts and logs stdin, stdout, and stderr for any target command."
-authors = ["João Sampaio"]
+authors = ["João Sampaio <jpmelos@gmail.com>"]
 license = "MIT"
+homepage = "https://github.com/jpmelos/fdintercept"
 repository = "https://github.com/jpmelos/fdintercept"
 keywords = ["cli", "io", "intercept", "logging", "stdio"]
 categories = [
@@ -12,6 +13,10 @@ categories = [
   "development-tools",
   "development-tools::debugging",
 ]
+
+[[bin]]
+name = "fdintercept"
+path = "src/main.rs"
 
 [lints.rust]
 warnings = "deny"
