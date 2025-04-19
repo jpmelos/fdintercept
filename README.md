@@ -26,12 +26,8 @@ deployments where every microsecond counts.
 
 ## Installation
 
-Clone this repository and run:
-
 ```bash
-git clone https://github.com/jpmelos/fdintercept
-cd fdintercept
-cargo install --path .
+cargo install fdintercept
 ```
 
 ## Usage
@@ -190,6 +186,7 @@ This assumes you have the Rust toolchain installed locally.
 git clone https://github.com/jpmelos/fdintercept
 cd fdintercept
 cargo build --release
+cargo install --path .
 ```
 
 ## Roadmap
