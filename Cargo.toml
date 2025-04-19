@@ -13,6 +13,7 @@ categories = [
   "development-tools",
   "development-tools::debugging",
 ]
+include = ["Cargo.lock", "Cargo.toml", "LICENSE", "README.md", "src/*"]
 
 [[bin]]
 name = "fdintercept"
