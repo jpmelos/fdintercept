@@ -6,9 +6,11 @@ target command.
 ## Features
 
 - Wraps any command and captures all I/O via stdin, stdout, and stderr.
+- No need for manual pipe setup or shell redirection.
 - Logs each stream to separate files.
-- Supports configuration via the CLI, an environment variable, or a
-  configuration file, including the target command.
+- Cross-platform, supports Linux and MacOS.
+- Clean configuration via the CLI, an environment variable, or a configuration
+  file, including the target command.
 - Configurable buffer size for I/O operations.
 - Preserves original program exit codes.
 - Handles process and child process termination gracefully.
