@@ -1,6 +1,6 @@
 [package]
 name = "fdintercept"
-version = "0.1.0"
+version = "0.2.0-dev"
 edition = "2024"
 description = "Intercepts and logs stdin, stdout, and stderr for any target command."
 authors = ["João Sampaio <jpmelos@gmail.com>"]
