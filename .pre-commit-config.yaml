@@ -54,8 +54,7 @@ repos:
     hooks:
       - name: Lint Rust code with `cargo clippy`
         id: clippy
-        description: Lint Rust sources.
-        entry: cargo clippy
         language: system
+        entry: cargo clippy
         types: [rust]
         pass_filenames: false
