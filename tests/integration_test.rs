@@ -182,10 +182,11 @@ fn test_large_data_transfer() {
     }
 
     let output = stdout_thread.join().unwrap();
+    fdintercept.wait().unwrap();
 
     let expected_output = format!(
         "Starting...\n{}",
-        format!("Echo: 0123456789\n").repeat(1_000_000)
+        "Echo: 0123456789\n".to_string().repeat(1_000_000)
     );
     assert_eq!(String::from_utf8(output).unwrap(), expected_output);
 }

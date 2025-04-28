@@ -57,7 +57,7 @@ repos:
       - name: Lint Rust code with `cargo clippy`
         id: clippy
         language: system
-        entry: cargo clippy
+        entry: cargo clippy --all-targets --all-features
         types:
           - rust
         pass_filenames: false
