@@ -61,6 +61,10 @@ jobs:
           # When upgrading pre-commit, make sure to update the key in the cache key.
           pip install pre-commit==4.2.0
 
+      - name: Install pre-commit dependencies
+        run: |
+          cargo install cargo-audit@0.21.2
+
       - name: Run pre-commit checks
         run: pre-commit run --all-files
 
