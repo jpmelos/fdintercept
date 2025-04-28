@@ -29,14 +29,16 @@ repos:
           - mdformat-gfm
           - mdformat-gfm-alerts
           - mdformat-tables
-        files: \.md$
+        types:
+          - markdown
 
   - repo: https://github.com/rbubley/mirrors-prettier
     rev: v3.5.3
     hooks:
       - name: Format YAML files
         id: prettier
-        files: \.(yaml|yml)$
+        types:
+          - yaml
 
   - repo: https://github.com/ComPWA/taplo-pre-commit
     rev: v0.9.3
@@ -56,5 +58,6 @@ repos:
         id: clippy
         language: system
         entry: cargo clippy
-        types: [rust]
+        types:
+          - rust
         pass_filenames: false
