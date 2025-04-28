@@ -61,6 +61,14 @@ repos:
         types:
           - rust
         pass_filenames: false
+      - name: Drop unused Rust dependencies
+        id: cargo-machete
+        language: system
+        entry: cargo machete
+        types_or:
+          - cargo
+          - cargo-lock
+        pass_filenames: false
       - name: Run a security audit with `cargo audit`
         id: cargo-audit
         language: system

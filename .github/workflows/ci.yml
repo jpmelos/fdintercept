@@ -63,7 +63,7 @@ jobs:
 
       - name: Install pre-commit dependencies
         run: |
-          cargo install cargo-audit@0.21.2 cargo-features-manager@0.10.0 taplo-cli@0.9.3
+          cargo install cargo-machete@0.8.0 cargo-audit@0.21.2 cargo-features-manager@0.10.0 taplo-cli@0.9.3
 
       - name: Run pre-commit checks
         run: pre-commit run --all-files
