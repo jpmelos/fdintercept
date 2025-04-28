@@ -69,3 +69,11 @@ repos:
           - cargo
           - cargo-lock
         pass_filenames: false
+      - name: Prune unused features from Rust dependencies
+        id: cargo-features
+        language: system
+        entry: ./scripts/cargo-features-wrapper.sh
+        types_or:
+          - cargo
+          - cargo-lock
+        pass_filenames: false
