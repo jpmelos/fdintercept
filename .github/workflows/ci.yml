@@ -68,6 +68,9 @@ jobs:
       - name: Run pre-commit checks
         run: pre-commit run --all-files
 
+      - name: Compile tests
+        run: cargo test --no-run --locked
+
       - name: Run tests
         timeout-minutes: 1
         run: cargo test
