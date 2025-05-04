@@ -192,7 +192,32 @@ fn get_settings_with_raw_cli_args(
     })
 }
 
-/// Reads and parses environment variables into configuration structure.
+/// Reads and parses environment variables into a configuration structure.
+///
+/// This function attempts to read and parse the following environment variables:
+/// - `FDINTERCEPTRC`: Path to a configuration file.
+/// - `FDINTERCEPT_RECREATE_LOGS`: Boolean flag for recreating log files.
+/// - `FDINTERCEPT_BUFFER_SIZE`: Numeric value for I/O buffer size.
+/// - `FDINTERCEPT_TARGET`: Command string to execute.
+///
+/// # Returns
+///
+/// Returns a `Result<EnvVars>` containing the parsed environment variables if successful.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - `FDINTERCEPTRC` is defined but empty,
+/// - `FDINTERCEPT_RECREATE_LOGS` contains an invalid boolean value,
+/// - `FDINTERCEPT_BUFFER_SIZE` contains an invalid numeric value, or
+/// - Any environment variable exists but cannot be read due to invalid Unicode.
+///
+/// # Environment Variables
+///
+/// - `FDINTERCEPTRC`: Optional path to configuration file.
+/// - `FDINTERCEPT_RECREATE_LOGS`: Optional boolean ("true"/"false") for log file handling.
+/// - `FDINTERCEPT_BUFFER_SIZE`: Optional positive integer for buffer size.
+/// - `FDINTERCEPT_TARGET`: Optional command string to execute.
 fn get_env_vars() -> Result<EnvVars> {
     Ok(EnvVars {
         conf: {
@@ -267,32 +292,35 @@ fn get_env_vars() -> Result<EnvVars> {
     })
 }
 
-/// Reads and parses environment variables into a configuration structure.
+/// Loads and parses the appropriate configuration file based on a resolution order.
 ///
-/// This function attempts to read and parse the following environment variables:
-/// - `FDINTERCEPTRC`: Path to a configuration file.
-/// - `FDINTERCEPT_RECREATE_LOGS`: Boolean flag for recreating log files.
-/// - `FDINTERCEPT_BUFFER_SIZE`: Numeric value for I/O buffer size.
-/// - `FDINTERCEPT_TARGET`: Command string to execute.
+/// This function searches for a configuration file in multiple locations, following a specific
+/// precedence order:
+///
+/// 1. Path specified via command-line `--conf` argument.
+/// 2. Path specified in the `FDINTERCEPTRC` environment variable.
+/// 3. User's home configuration file at `~/.fdinterceptrc.toml`.
+/// 4. XDG configuration directory at `$XDG_CONFIG_HOME/fdintercept/rc.toml`.
+///
+/// The first valid configuration file found is parsed and returned. If no configuration file is
+/// found or all attempts fail, a default empty configuration is returned.
+///
+/// # Arguments
+///
+/// * `cli_args` - Reference to the parsed command-line arguments.
+/// * `env_vars` - Reference to the parsed environment variables.
 ///
 /// # Returns
 ///
-/// Returns a `Result<EnvVars>` containing the parsed environment variables if successful.
+/// Returns a `Result<Config>` which is:
+/// - `Ok(Config)` containing the parsed configuration if successful, or
+/// - `Err` if all configuration files are inaccessible or contain syntax errors.
 ///
 /// # Errors
 ///
 /// This function will return an error if:
-/// - `FDINTERCEPTRC` is defined but empty,
-/// - `FDINTERCEPT_RECREATE_LOGS` contains an invalid boolean value,
-/// - `FDINTERCEPT_BUFFER_SIZE` contains an invalid numeric value, or
-/// - Any environment variable exists but cannot be read due to invalid Unicode.
-///
-/// # Environment Variables
-///
-/// - `FDINTERCEPTRC`: Optional path to configuration file.
-/// - `FDINTERCEPT_RECREATE_LOGS`: Optional boolean ("true"/"false") for log file handling.
-/// - `FDINTERCEPT_BUFFER_SIZE`: Optional positive integer for buffer size.
-/// - `FDINTERCEPT_TARGET`: Optional command string to execute.
+/// - A specified configuration file exists but cannot be read, or
+/// - A configuration file contains invalid TOML syntax that cannot be parsed.
 fn get_config(cli_args: &CliArgs, env_vars: &EnvVars) -> Result<Config> {
     if let Some(ref path) = cli_args.conf {
         return std::fs::read_to_string(path)
