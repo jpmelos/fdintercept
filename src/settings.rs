@@ -137,13 +137,10 @@ pub fn get_settings() -> Result<ResolvedSettings> {
 /// 2. Environment variables, and then
 /// 3. Configuration files (lowest priority).
 ///
-/// # Type Parameters
-///
-/// * `RawCliArguments` - Any type that can be converted into an iterator of `String`s.
-///
 /// # Arguments
 ///
-/// * `raw_cli_args` - Raw command line arguments that will be parsed into structured settings.
+/// * `raw_cli_args` - Raw command line arguments that will be parsed into structured settings, any
+///   type that can be converted into an iterator of `String`s.
 ///
 /// # Returns
 ///
@@ -164,8 +161,8 @@ pub fn get_settings() -> Result<ResolvedSettings> {
 /// 3. Loads and parses configuration files,
 /// 4. Determines if default log files should be used, and
 /// 5. Combines all sources to create final settings.
-fn get_settings_with_raw_cli_args<RawCliArguments: IntoIterator<Item = String>>(
-    raw_cli_args: RawCliArguments,
+fn get_settings_with_raw_cli_args(
+    raw_cli_args: impl IntoIterator<Item = String>,
 ) -> Result<ResolvedSettings> {
     let cli_args = CliArgs::parse_from(raw_cli_args);
     let env_vars = get_env_vars().context("Error reading environment variables")?;
