@@ -157,7 +157,7 @@ Here are the accepted fields:
   `stderr.log`.
 - `recreate_logs`: Re-create log files instead of appending to them. Default:
   false.
-- `buffer-size`: Size in bytes of the buffer used for I/O operations. Default:
+- `buffer_size`: Size in bytes of the buffer used for I/O operations. Default:
   8 KiB.
 - `target`: The target command that will be executed.
 
