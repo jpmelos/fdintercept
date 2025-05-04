@@ -185,7 +185,6 @@ This assumes you have the Rust toolchain installed locally.
 ```bash
 git clone https://github.com/jpmelos/fdintercept
 cd fdintercept
-cargo build --release
 cargo install --path .
 ```
 
