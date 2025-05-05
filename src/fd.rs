@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use nix::fcntl::{self, OFlag};
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -149,7 +149,7 @@ pub fn create_log_file(
 /// - Error occurred during polling, or
 /// - Error processing events (except for log write errors, which disable logging).
 pub fn process_fd(
-    mut src_fd: impl Read + AsRawFd,
+    mut src_fd: impl Read + AsFd + AsRawFd,
     mut dst_fd: impl Write,
     buffer_size: usize,
     mut maybe_log: Option<impl Write>,
@@ -226,7 +226,7 @@ pub fn process_fd(
 /// - Failed to create new poll instance, or
 /// - Failed to register file descriptors.
 fn set_up_poll(
-    src_fd: &impl AsRawFd,
+    src_fd: &(impl AsFd + AsRawFd),
     maybe_signal_rx: Option<&OwnedFd>,
     log_descriptor: &str,
 ) -> Result<mio::Poll> {
@@ -261,19 +261,17 @@ fn set_up_poll(
 /// Returns an error if:
 /// - Failed to get or set file descriptor flags, or
 /// - Failed to register with poll instance.
-fn register_fd_into_poll(poll: &mio::Poll, fd: &impl AsRawFd, token: usize) -> Result<()> {
-    let raw_fd = fd.as_raw_fd();
-
+fn register_fd_into_poll(poll: &mio::Poll, fd: &(impl AsFd + AsRawFd), token: usize) -> Result<()> {
     // All file descriptors that are used with Mio should be in non-blocking mode.
-    let flags = fcntl::fcntl(raw_fd, fcntl::F_GETFL).context("Error getting flags")?;
+    let flags = fcntl::fcntl(fd, fcntl::F_GETFL).context("Error getting flags")?;
     fcntl::fcntl(
-        raw_fd,
+        fd,
         fcntl::F_SETFL(OFlag::from_bits_truncate(flags as i32) | OFlag::O_NONBLOCK),
     )
     .context("Error setting source fd as non-blocking")?;
 
     poll.registry().register(
-        &mut mio::unix::SourceFd(&raw_fd),
+        &mut mio::unix::SourceFd(&fd.as_raw_fd()),
         mio::Token(token),
         mio::Interest::READABLE,
     )?;
@@ -373,6 +371,7 @@ fn inner_fd_event_readable(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::BorrowedFd;
     use std::os::unix;
 
     struct MockRead {
@@ -393,6 +392,15 @@ mod tests {
                 }
                 None => Ok(0), // EOF when no more responses.
             }
+        }
+    }
+
+    impl AsFd for MockRead {
+        fn as_fd(&self) -> BorrowedFd {
+            // SAFETY: This is not actually ever used to read from stdin in this test. This is here
+            // just because we need to implement this trait for `MockRead` so we can call
+            // `process_fd` with it.
+            unsafe { BorrowedFd::borrow_raw(1) }
         }
     }
 

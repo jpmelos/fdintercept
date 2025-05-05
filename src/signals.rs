@@ -74,7 +74,7 @@ mod tests {
         use super::*;
         use nix::unistd::pipe;
         use signal_hook::iterator::Signals;
-        use std::os::fd::AsRawFd;
+        use std::os::fd::AsFd;
         use std::os::unix::process::ExitStatusExt;
         use std::process::Command;
 
@@ -100,10 +100,7 @@ mod tests {
             assert_eq!(status.signal().unwrap(), Signal::SIGTERM as i32);
 
             let mut buf = [0; 1];
-            assert_eq!(
-                nix::unistd::read(signal_rx.as_raw_fd(), &mut buf).unwrap(),
-                1
-            );
+            assert_eq!(nix::unistd::read(signal_rx.as_fd(), &mut buf).unwrap(), 1);
         }
 
         #[test]
