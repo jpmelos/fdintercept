@@ -4,6 +4,7 @@ on:
   push:
 
 env:
+  PYTHON_VERSION: 3.13.3
   PRECOMMIT_VERSION: 4.2.0
   CARGO_MACHETE_VERSION: 0.8.0
   CARGO_AUDIT_VERSION: 0.21.2
@@ -21,7 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13.3"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache Rust toolchain
         uses: actions/cache@v4
@@ -37,8 +38,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.pythonLocation }}
-          key: ${{ runner.os }}-pip-pre-commit-${{ env.PRECOMMIT_VERSION }}
-          restore-keys: ${{ runner.os }}-pip
+          key: ${{ runner.os }}-pip-${{ env.PYTHON_VERSION }}-pre-commit-${{ env.PRECOMMIT_VERSION }}
+          restore-keys: ${{ runner.os }}-pip-${{ env.PYTHON_VERSION }}
 
       - name: Cache pre-commit downloads
         uses: actions/cache@v4
