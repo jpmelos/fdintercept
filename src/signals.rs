@@ -52,8 +52,8 @@ pub fn process_signals(
             // unwrap: Safe because if this thread is running, the main thread is waiting for it to
             // finish, so it can't be holding this lock.
             &mut mutex_child_guard.lock().unwrap().child,
-            // unwrap: Safe because this instance of `signals` only receives `SIGHUP`, `SIGINT`,
-            // `SIGTERM`, and `SIGCHLD`, and they are guaranteed to parse into a valid signal.
+            // unwrap: Safe because this if statement only processes `SIGHUP`, `SIGINT`, and
+            // `SIGTERM`, and they are guaranteed to parse into a valid signal.
             Signal::try_from(signum).unwrap(),
             Duration::from_secs(15),
             Duration::from_secs(5),
