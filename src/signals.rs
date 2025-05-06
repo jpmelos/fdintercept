@@ -104,7 +104,7 @@ mod tests {
         }
 
         #[test]
-        fn test_process_signals_closed_pipe() {
+        fn process_signals_closed_pipe() {
             let (signal_rx, signal_tx) = pipe().unwrap();
 
             let child_guard = Arc::new(Mutex::new(ChildGuard {
