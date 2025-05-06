@@ -48,12 +48,18 @@ where
     let handle = std::thread::Builder::new()
         .name(thread_name.to_string())
         .spawn_scoped(scope, move || {
-            let result = func();
             // unwrap: Safe because `handle_tx` is guaranteed to have sent the handle.
             let handle = handle_rx.recv().unwrap();
-            // unwrap: Safe because the receiving side is guaranteed to still be connected.
-            tx.send((thread_name, handle)).unwrap();
-            result
+
+            // This will send the thread handle to the caller of this function when this stackframe
+            // is destroyed, even if that happens due to a panic.
+            SendOnDrop {
+                handle: Some(handle),
+                tx,
+                thread_name,
+            };
+
+            func()
         })
         .context("Failed to create thread")?;
 
@@ -61,6 +67,23 @@ where
     handle_tx.send(handle).unwrap();
 
     Ok(())
+}
+
+// A struct with a `Drop` implementation to ensure the thread handle is sent to the caller of
+// `spawn_self_shipping_thread_in_scope` even if the closure running in the thread panics.
+struct SendOnDrop<'scope> {
+    handle: Option<ScopedJoinHandle<'scope, Result<()>>>,
+    tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
+    thread_name: &'static str,
+}
+
+impl Drop for SendOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            // unwrap: Safe because the receiving side is guaranteed to still be connected.
+            self.tx.send((self.thread_name, handle)).unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +115,23 @@ mod tests {
                 assert_eq!(thread_name, "test_thread");
                 handle.join().unwrap().unwrap();
                 assert!(executed.load(Ordering::SeqCst));
+            });
+        }
+
+        #[test]
+        fn handles_panic() {
+            thread::scope(|scope| {
+                let (tx, rx) = mpsc::channel();
+
+                spawn_self_shipping_thread_in_scope(scope, tx, "panicking_thread", || {
+                    panic!("Thread is panicking on purpose for testing");
+                })
+                .unwrap();
+
+                let (thread_name, handle) = rx.recv().unwrap();
+                assert_eq!(thread_name, "panicking_thread");
+                let join_result = handle.join();
+                assert!(join_result.is_err());
             });
         }
     }
