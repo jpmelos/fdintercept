@@ -34,14 +34,15 @@ use std::thread::{self, ScopedJoinHandle};
 /// * `F: FnOnce() -> Result<()>` - The function must take no arguments and return a Result.
 /// * `F: Send` - The function must be safe to send between threads.
 /// * `F: 'scope` - The function must live at least as long as the scope.
-pub fn spawn_self_shipping_thread_in_scope<'scope, F>(
+pub fn spawn_self_shipping_thread_in_scope<'scope, 'thread_name, F>(
     scope: &'scope thread::Scope<'scope, '_>,
-    tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
-    thread_name: &'static str,
+    tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, Result<()>>)>,
+    thread_name: &'thread_name str,
     func: F,
 ) -> Result<()>
 where
     F: FnOnce() -> Result<()> + Send + 'scope,
+    'thread_name: 'scope,
 {
     let (handle_tx, handle_rx) = mpsc::channel();
 
@@ -71,13 +72,13 @@ where
 
 // A struct with a `Drop` implementation to ensure the thread handle is sent to the caller of
 // `spawn_self_shipping_thread_in_scope` even if the closure running in the thread panics.
-struct SendOnDrop<'scope> {
+struct SendOnDrop<'scope, 'thread_name> {
     handle: Option<ScopedJoinHandle<'scope, Result<()>>>,
-    tx: mpsc::Sender<(&'static str, ScopedJoinHandle<'scope, Result<()>>)>,
-    thread_name: &'static str,
+    tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, Result<()>>)>,
+    thread_name: &'thread_name str,
 }
 
-impl Drop for SendOnDrop<'_> {
+impl Drop for SendOnDrop<'_, '_> {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             // unwrap: Safe because the receiving side is guaranteed to still be connected.
