@@ -13,6 +13,9 @@ use std::thread::{self, ScopedJoinHandle};
 /// handle back through a channel, allowing the parent thread to track and manage it. The thread is
 /// created within the provided scope, ensuring it doesn't outlive its parent thread.
 ///
+/// The function handles thread panics gracefully, ensuring that the thread handle is still sent
+/// back to the parent thread even if the thread panics during execution.
+///
 /// # Arguments
 ///
 /// * `scope` - The thread scope in which the new thread will be created.
@@ -27,13 +30,17 @@ use std::thread::{self, ScopedJoinHandle};
 /// # Type Parameters
 ///
 /// * `'scope` - Lifetime of the thread scope.
+/// * `'thread_name` - Lifetime of the thread name.
 /// * `F` - Type of the function to be executed in the thread.
+/// * `R` - Return type of the function.
 ///
 /// # Generic Constraints
 ///
-/// * `F: FnOnce() -> Result<()>` - The function must take no arguments and return a Result.
+/// * `F: FnOnce() -> R` - The function must take no arguments and return a value of type R.
 /// * `F: Send` - The function must be safe to send between threads.
 /// * `F: 'scope` - The function must live at least as long as the scope.
+/// * `R: Send + 'scope` - The return value must be sendable between threads and live at least as
+///   long as the scope.
 pub fn spawn_self_shipping_thread_in_scope<'scope, 'thread_name, F, R>(
     scope: &'scope thread::Scope<'scope, '_>,
     tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, R>)>,
