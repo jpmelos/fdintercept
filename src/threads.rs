@@ -34,14 +34,15 @@ use std::thread::{self, ScopedJoinHandle};
 /// * `F: FnOnce() -> Result<()>` - The function must take no arguments and return a Result.
 /// * `F: Send` - The function must be safe to send between threads.
 /// * `F: 'scope` - The function must live at least as long as the scope.
-pub fn spawn_self_shipping_thread_in_scope<'scope, 'thread_name, F>(
+pub fn spawn_self_shipping_thread_in_scope<'scope, 'thread_name, F, R>(
     scope: &'scope thread::Scope<'scope, '_>,
-    tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, Result<()>>)>,
+    tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, R>)>,
     thread_name: &'thread_name str,
     func: F,
 ) -> Result<()>
 where
-    F: FnOnce() -> Result<()> + Send + 'scope,
+    F: FnOnce() -> R + Send + 'scope,
+    R: Send + 'scope,
     'thread_name: 'scope,
 {
     let (handle_tx, handle_rx) = mpsc::channel();
@@ -56,6 +57,8 @@ where
             // is destroyed, even if that happens due to a panic.
             SendOnDrop {
                 handle: Some(handle),
+                // It is responsibility of the caller to make sure that the `rx` side of this
+                // channel is alive until after this thread is finished.
                 tx,
                 thread_name,
             };
@@ -72,13 +75,13 @@ where
 
 // A struct with a `Drop` implementation to ensure the thread handle is sent to the caller of
 // `spawn_self_shipping_thread_in_scope` even if the closure running in the thread panics.
-struct SendOnDrop<'scope, 'thread_name> {
-    handle: Option<ScopedJoinHandle<'scope, Result<()>>>,
-    tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, Result<()>>)>,
+struct SendOnDrop<'scope, 'thread_name, R> {
+    handle: Option<ScopedJoinHandle<'scope, R>>,
+    tx: mpsc::Sender<(&'thread_name str, ScopedJoinHandle<'scope, R>)>,
     thread_name: &'thread_name str,
 }
 
-impl Drop for SendOnDrop<'_, '_> {
+impl<R> Drop for SendOnDrop<'_, '_, R> {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             // unwrap: Safe because the receiving side is guaranteed to still be connected.
@@ -93,6 +96,7 @@ mod tests {
 
     mod spawn_self_shipping_thread_in_scope {
         use super::*;
+        use anyhow::Error;
         use std::sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -108,7 +112,7 @@ mod tests {
 
                 spawn_self_shipping_thread_in_scope(scope, tx, "test_thread", move || {
                     executed_clone.store(true, Ordering::SeqCst);
-                    Ok(())
+                    Result::<(), Error>::Ok(())
                 })
                 .unwrap();
 
