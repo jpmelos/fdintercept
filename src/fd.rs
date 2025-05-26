@@ -823,7 +823,7 @@ mod tests {
         #[test]
         fn error_on_read() {
             let mut src = MockRead {
-                responses: vec![Err(Error::new(ErrorKind::Other, "read error"))],
+                responses: vec![Err(Error::other("read error"))],
                 current: 0,
             };
             let mut dst = MockWrite {
@@ -869,7 +869,7 @@ mod tests {
                 current: 0,
             };
             let mut dst = MockWrite {
-                responses: vec![Err(Error::new(ErrorKind::Other, "write error"))],
+                responses: vec![Err(Error::other("write error"))],
                 current: 0,
                 written_data: vec![],
             };
@@ -897,7 +897,7 @@ mod tests {
 
             let mut buffer = vec![0; 1024];
             let mut log_file = Some(MockWrite {
-                responses: vec![Err(Error::new(ErrorKind::Other, "log write error"))],
+                responses: vec![Err(Error::other("log write error"))],
                 current: 0,
                 written_data: vec![],
             });
