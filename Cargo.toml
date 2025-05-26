@@ -42,7 +42,7 @@ clap = { version = "4.5.38", features = [
   "std",
   "usage",
 ], default-features = false }
-mio = { version = "1.0.3", features = ["os-ext"] }
+mio = { version = "1.0.4", features = ["os-ext"] }
 nix = { version = "0.30.1", features = ["fs", "signal"] }
 non-empty-string = "0.2.6"
 nonempty = "0.11.0"
