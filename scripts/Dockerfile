@@ -1,4 +1,4 @@
-FROM rust:1.86-slim
+FROM rust:1.87-slim
 
 RUN apt update && \
     apt install -y pkg-config libssl-dev && \
