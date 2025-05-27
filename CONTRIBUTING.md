@@ -49,7 +49,8 @@ provides guidelines and instructions for contributing to the project.
 ### Documentation
 
 - Keep `README.md` up to date with any user-facing changes.
-- Use mdformat for consistent Markdown formatting.
+- Add your changes to the `CHANGELOG.md`.
+- Use `mdformat` for consistent Markdown formatting.
 - Include code examples in documentation where appropriate.
 
 ### Commits
@@ -61,10 +62,7 @@ provides guidelines and instructions for contributing to the project.
 ## Pull request process
 
 1. Ensure your code passes all CI checks.
-2. Update documentation if needed.
-3. Add tests for new functionality.
-4. Update the `README.md` if adding new features.
-5. Ensure your PR description clearly explains the changes and motivation.
+2. Ensure your PR description clearly explains the changes and motivation.
 
 ## Testing
 
