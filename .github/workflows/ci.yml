@@ -98,7 +98,7 @@ jobs:
         run: pre-commit run --all-files
 
       - name: Compile tests
-        run: cargo test --no-run --locked
+        run: cargo test --no-run
 
       - name: Run tests
         timeout-minutes: 1
