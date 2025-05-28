@@ -35,6 +35,8 @@ provides guidelines and instructions for contributing to the project.
    ```bash
    ./scripts/coverage.sh
    ```
+7. Commit your changes.
+8. Open a PR against upstream!
 
 ## Code standards
 
