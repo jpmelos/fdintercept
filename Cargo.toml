@@ -35,7 +35,7 @@ multiple-crate-versions = "allow"
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.38", features = [
+clap = { version = "4.5.39", features = [
   "color",
   "derive",
   "help",
