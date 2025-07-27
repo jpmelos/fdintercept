@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+trap 'echo "Exit status $? at line $LINENO from: $BASH_COMMAND"' ERR
 
 # Change to the parent directory of this script.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
